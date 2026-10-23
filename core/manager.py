@@ -1,124 +1,104 @@
-from core.analyzer import TickerAnalyzer
-from database.storage import CSVSignalStorage
+# Модуль: core/manager.py
 import asyncio
 from collections import deque
-from typing import Dict, Optional
+from typing import Dict, List
 from exchanges.bybit import BybitExchange
-from config import settings
+from core.analyzer import TickerAnalyzer
 from notifications.console import ConsoleNotifier
-
+from database.storage import CSVSignalStorage
+from config import settings
 
 class TickerManager:
 	"""
-	Главный диспетчер скринера. Управляет жизненным циклом бота,
-	циклами опроса биржи и хранением истории тикеров в памяти.
+	Главный диспетчер скринера. Опрашивает биржу Bybit, контролирует таймер
+	баланса демо-аккаунта (раз в 5 минут) и координирует запись в ОЗУ/CSV.
 	"""
 
 	def __init__(self):
-		# Инициализируем наш модуль Bybit
-		self.exchange = BybitExchange()
+		self.bybit = BybitExchange()
+		self.exchanges = [self.bybit]
 		
-		# Основное хранилище истории цен и объемов.
-		# Структура будет выглядеть так:
-		# {
-		#   'BTC/USDT': deque([{'price': 65000, 'volume': 100}, {'price': 65100, 'volume': 105}], maxlen=60),
-		#   'ETH/USDT': deque([...], maxlen=60)
-		# }
-		self.history: Dict[str, deque] = {}
-		
-		# Флаг управления циклом бота
-		self.is_running: bool = False
-
 		self.analyzer = TickerAnalyzer(
 			price_change_threshold=1.5, 
 			volume_multiplier=3.0, 
-			volatility_multiplier=4.0,  # Импульс должен быть в 4 раза сильнее среднего шума
+			volatility_multiplier=4.0, 
 			lookback_period=6
 		)
-
-		
-		#создание нотификатора
 		self.notifier = ConsoleNotifier()
-		#Инициализация хранилища
 		self.storage = CSVSignalStorage()
-
-
-
-
+		
+		self.history: Dict[str, deque] = {}
+		self.is_running: bool = False
 
 	async def start(self):
-		"""Запуск бесконечного асинхронного цикла опроса биржи"""
-		print("🚀 [МЕНЕДЖЕР] Инициализация подключения к бирже...")
-		await self.exchange.init_exchange()
+		"""Запуск асинхронного опроса биржи и таймера баланса"""
+		print("🚀 [МЕНЕДЖЕР] Инициализация подключения к Bybit...")
+		await asyncio.gather(*[ex.init_exchange() for ex in self.exchanges])
 		
 		self.is_running = True
-		print(f"⏱️ [МЕНЕДЖЕР] Скринер запущен. Интервал опроса: {settings.SCAN_INTERVAL} сек.")
+		print(f"⏱️ [МЕНЕДЖЕР] Скринер запущен. Интервал: {settings.SCAN_INTERVAL} сек.")
+		
+		# Счётчик итераций для отсчёта 5 минут (30 итераций по 10 секунд = 300 секунд)
+		iteration_count = 0
 
 		try:
 			while self.is_running:
-				# Засекаем время начала цикла для точного расчета паузы
 				start_time = asyncio.get_event_loop().time()
 				
-				# Шаг 1: Асинхронно стягиваем свежие тикеры с Bybit
-				tickers = await self.exchange.fetch_tickers()
-
-				if tickers:
-					# Шаг 2: Отправляем новые данные в наше легковесное хранилище истории
-					self._update_history(tickers)
-					
-					# Шаг 2.1: Запускаем математический анализ истории
+				# --- ЛОГИКА ПРОВЕРКИ БАЛАНСА (КАЖДЫЕ 5 МИНУТ) ---
+				if iteration_count % 30 == 0:
+					# Запускаем проверку баланса как фоновую задачу, чтобы она не тормозила сбор тикеров
+					asyncio.create_task(self._check_and_log_balance())
+				
+				# Стандартный сбор тикеров спота
+				fetch_tasks = [ex.fetch_tickers() for ex in self.exchanges]
+				results: List[Dict] = await asyncio.gather(*fetch_tasks)
+				
+				combined_tickers = {}
+				for exchange_tickers in results:
+					if exchange_tickers:
+						combined_tickers.update(exchange_tickers)
+				
+				if combined_tickers:
+					self._update_history(combined_tickers)
 					signals = self.analyzer.analyze(self.history)
 					if signals:
 						self.notifier.print_signals(signals)
-						# Закидываем сигналы в безопасную асинхронную очередь
 						for signal in signals:
 							self.storage.add_to_save_queue(signal)
-
-
 					
-					# Легкий лог-счетчик для понимания, что бот жив
-					print(f"📊 [МЕНЕДЖЕР] Обновлено монет в памяти: {len(tickers)}")
-
-
-
-					
-
+					print(f"📊 [МЕНЕДЖЕР] Монет в мониторинге (Bybit с фильтром): {len(combined_tickers)}")
 				
-				# Шаг 3: Рассчитываем динамическую паузу.
-				# Если запрос шел 2 секунды, а интервал у нас 10 секунд,
-				# бот поспит ровно 8 секунд, чтобы циклы шли стабильно.
+				iteration_count += 1
 				elapsed_time = asyncio.get_event_loop().time() - start_time
 				sleep_time = max(0.1, settings.SCAN_INTERVAL - elapsed_time)
-				
-				# Асинхронный сон: в этот момент скрипт полностью "отдает" процессор системе
 				await asyncio.sleep(sleep_time)
 
 		except asyncio.CancelledError:
-			print("👋 [МЕНЕДЖЕР] Получен сигнал на остановку цикла.")
+			print("👋 [МЕНЕДЖЕР] Получен сигнал на остановку.")
 		finally:
-			# Важно: всегда закрываем сетевые соединения при остановке
 			await self.stop()
 
+	async def _check_and_log_balance(self):
+		"""Фоновый метод запроса баланса кошелька, вывода в консоль и сохранения на диск"""
+		balance = await self.bybit.fetch_balance_usdt()
+		if balance > 0.0 or True: # Условие True сработает, даже если баланс демо равен ровно 0.0
+			print(f"💰 [БАЛАНС] Текущие средства на Демо-аккаунте Bybit: {balance:,.2f} USDT")
+			self.storage.add_balance_to_queue(balance)
+
 	def _update_history(self, current_tickers: Dict[str, Dict[str, float]]):
-		"""
-		Метод обновления истории. Добавляет новую точку в deque 
-		и автоматически удаляет старые точки, если превышен лимит.
-		"""
+		"""Обновление скользящих окон истории цен и объемов"""
 		for symbol, data in current_tickers.items():
-			# Если монету видим впервые, создаем для нее персональный deque
 			if symbol not in self.history:
 				self.history[symbol] = deque(maxlen=settings.MAX_TIMESTAMPS)
 			
-			# Добавляем срез данных в очередь. 
-			# Благодаря maxlen, если элементов станет больше 60, первый (самый старый) вылетит.
 			self.history[symbol].append({
 				'price': data['price'],
 				'volume': data['volume']
 			})
 
 	async def stop(self):
-		"""Корректное завершение работы менеджера"""
+		"""Корректное закрытие соединений"""
 		self.is_running = False
-		await self.exchange.close()
-		print("🛑 [МЕНЕДЖЕР] Бот полностью остановлен.")
-
+		await asyncio.gather(*[ex.close() for ex in self.exchanges])
+		print("🛑 [МЕНЕДЖЕР] Подключение к Bybit закрыто. Бот остановлен.")
