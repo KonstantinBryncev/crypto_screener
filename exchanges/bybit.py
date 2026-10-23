@@ -78,14 +78,29 @@ class BybitExchange(BaseExchange):
 			# Если ключи демо-аккаунта еще не активировались на стороне биржи, возвращаем 0
 			return 0.0
 
-	async def fetch_tickers(self) -> Dict[str, Dict[str, float]]:
-		"""Штатный сбор тикеров спота через чистый публичный CCXT"""
-		if self.api is None:
-			return {}
 
+	async def fetch_order_book(self, symbol: str, limit: int = 5) -> Optional[dict]:
+		"""
+		Переопределенный метод получения стакана Bybit.
+		Жестко заставляет биржу отдавать ТОЛЬКО спотовый стакан, полностью убирая ошибки category=option.
+		"""
+		if not self.api:
+			return None
 		try:
-			# Запрашиваем тикеры строго для спотового рынка
-			raw_tickers = await self.api.fetch_tickers(symbols=None, params={'category': 'spot'})
+			# Передаем params={'category': 'spot'} — это полностью отключит запросы к опционам!
+			return await self.api.fetch_order_book(symbol, limit=limit, params={'category': 'spot'})
+		except Exception as e:
+			# Ничего не принтуем в консоль, чтобы не флудить
+			return None
+
+
+	async def fetch_tickers(self) -> Dict[str, Dict[str, float]]:
+		if not self.api:
+			return {}
+		try:
+			# Передаем params={'category': 'spot'}, чтобы Bybit ВООБЩЕ не лез в опционы!
+			raw_tickers = await self.api.fetch_tickers(params={'category': 'spot'})
+
 			normalized_tickers = {}
 			total_processed = 0
 			filtered_by_volume = 0
