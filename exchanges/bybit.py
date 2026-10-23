@@ -85,7 +85,7 @@ class BybitExchange(BaseExchange):
 
 		try:
 			# Запрашиваем тикеры строго для спотового рынка
-			raw_tickers = await self.api.fetch_tickers(params={'category': 'spot'})
+			raw_tickers = await self.api.fetch_tickers(symbols=None, params={'category': 'spot'})
 			normalized_tickers = {}
 			total_processed = 0
 			filtered_by_volume = 0
@@ -112,9 +112,9 @@ class BybitExchange(BaseExchange):
 					}
 			
 			if total_processed > 0:
-				print(f"🧹 [ФИЛЬТР] Из {total_processed} спотовых пар отсеяно {filtered_by_volume} низколиквидных монет (меньше ${settings.MIN_24H_VOLUME_USDT:,})")
+				#print(f"🧹 [ФИЛЬТР] Из {total_processed} спотовых пар отсеяно {filtered_by_volume} низколиквидных монет (меньше ${settings.MIN_24H_VOLUME_USDT:,})")
 			
-			return normalized_tickers
+				return normalized_tickers
 
 		except Exception as e:
 			print(f"⚠️ [BYBIT] Ошибка сбора данных через CCXT: {e}")

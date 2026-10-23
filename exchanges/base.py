@@ -3,25 +3,27 @@ from abc import ABC, abstractmethod
 from typing import Dict, Optional, List
 import ccxt.async_support as ccxt
 from network.client import AsyncHttpClient
+import logging
+
+logger = logging.getLogger("BaseExchange")
 
 class BaseExchange(ABC):
 	"""
 	Абстрактный базовый класс для всех криптобирж в проекте.
-	Класс наследуется от ABC (Abstract Base Class), что запрещает создавать 
-	его объекты напрямую. Он служит исключительно шаблоном-инструкцией.
+	Служит шаблоном-инструкцией и содержит общие сетевые методы.
 	"""
 
 	def __init__(self, exchange_id: str):
 		"""
 		Конструктор базового класса.
-		:param exchange_id: Уникальный идентификатор биржи в системе CCXT (например, 'bybit', 'binance')
+		:param exchange_id: Уникальный идентификатор биржи в системе CCXT (например, 'bybit', 'bingx')
 		"""
 		self.exchange_id: str = exchange_id
 		
 		# Переменная, где будет храниться экземпляр асинхронного класса биржи от CCXT
 		self.api: Optional[ccxt.Exchange] = None
 		
-		# Получаем наш синглтон асинхронного HTTP-клиента из Задачи 1
+		# Получаем наш синглтон асинхронного HTTP-клиента
 		self.network_client = AsyncHttpClient()
 
 	async def init_exchange(self):
@@ -33,17 +35,24 @@ class BaseExchange(ABC):
 			# Получаем класс биржи динамически по её названию из библиотеки ccxt.async_support
 			exchange_class = getattr(ccxt, self.exchange_id)
 			
-			# Инициализируем биржу с базовыми настройками оптимизации ресурсов
+			# Инициализируем биржу с жестким ограничением рынков
 			self.api = exchange_class({
 				'enableRateLimit': True,  # Автоматический контроль частоты запросов
 				'timeout': 10000,         # Таймаут запроса — 10 секунд
-				# ЖЕСТКО УКАЗЫВАЕМ РЫНОК: Заставляем CCXT работать со Спотом, а не с Фьючерсами
+				# ЖЕСТКАЯ СТАБИЛИЗАЦИЯ НА СПОТОВОМ РЫНКЕ
 				'options': {
-					'defaultType': 'spot'
+					'defaultType': 'spot',        # Базовый тип рынка для Bybit/OKX/KuCoin
+					'adjustForTimeDifference': True # Защита от рассинхронизации времени Windows с биржей
 				}
 			})
 			
-			# Интеграция прокси (остается без изменений)
+			# Кастомная заплатка специально для BingX, так как CCXT драйвер BingX 
+			# иногда игнорирует defaultType и требует явного переключения подтипа
+			if self.exchange_id == 'bingx':
+				self.api.options['type'] = 'spot'
+				self.api.options['subType'] = 'spot'
+			
+			# Интеграция прокси
 			proxy = self.network_client._get_random_proxy()
 			if proxy:
 				self.api.proxies = {'http': proxy, 'https': proxy}
@@ -52,21 +61,24 @@ class BaseExchange(ABC):
 				print(f"🔒 [{self.exchange_id.upper()}] Подключение настроено напрямую (без прокси).")
 
 
+	async def fetch_order_book(self, symbol: str, limit: int = 5) -> Optional[dict]:
+		"""
+		Общий асинхронный метод получения стакана ордеров (Orderbook) для арбитража.
+		Подходит для всех нативных бирж CCXT. Глубина ограничена до 5 ордеров для экономии ОЗУ.
+		"""
+		if not self.api:
+			return None
+		try:
+			return await self.api.fetch_order_book(symbol, limit=limit)
+		except Exception as e:
+			logger.warning(f"Ошибка получения стакана {symbol} с {self.exchange_id.upper()}: {e}")
+			return None
+
 	@abstractmethod
 	async def fetch_tickers(self) -> Dict[str, Dict[str, float]]:
 		"""
 		Абстрактный метод для получения текущих цен и объемов (тикеров).
-		
-		Декоратор @abstractmethod ЖЕСТКО ОБЯЗЫВАЕТ любой дочерний класс 
-		(например, BybitExchange) реализовать этот метод внутри себя.
-		Если мы забудем его написать в bybit.py, Python выдаст ошибку еще при запуске.
-		
-		Каждая биржа должна возвращать данные в ЕДИНОМ СТАНДАРТЕ нашего скринера:
-		{
-			'BTC/USDT': {'price': 65000.0, 'volume': 1200.5},
-			'ETH/USDT': {'price': 3450.2, 'volume': 8500.1}
-		}
-		Такой подход на чистых словарях Python экономит кучу ОЗУ по сравнению с pandas!
+		Обязателен к реализации в дочерних классах.
 		"""
 		pass
 
