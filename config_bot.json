@@ -1,0 +1,67 @@
+{
+	"hosts": {
+		"bybit": "https://api.bybit.com",
+		"bingx": "https://open-api.bingx.com",
+		"kucoin": "https://api.kucoin.com",
+		"gate": "https://api.gateio.ws/api/v4"
+	},
+
+
+
+	"_comment_exchanges": "БЛОК АВТОРИЗАЦИИ: Индивидуальные API-ключи аккаунтов для приватных запросов балансов",
+	"exchanges": {
+		"bybit": {
+			"api_key": "Bc1DiDf275wPOcnVpe",
+			"api_secret": "Md1Vgih3xgBkYpni5izMZVLG5ZhPulHHZtom"
+		},
+		"bingx": {
+			"api_key": "ENVridQBYBjb0bkOzSeSqsUsZeCJt84hMiQ5B1XZ9nNbq9TFkRNim9hfXOLKBNkISAEcNuezwSzu0tMwVeA",
+			"api_secret": "I8mY5c0KArAbUFvQDhIsuruBpIeEH6v8x47Tub7zqcFFUqpptb5ZAIjzmf8w4LT7flIwJX1OeXzoJxQPr3ehw"
+		},
+		"kucoin": {
+			"api_key": "6addc160e7345500016dd9fe",
+			"api_secret": "3223f819-794c-4848-afcb-1e5e99b57a18",
+			"passphrase": "ТВОЙ_KUCOIN_PASSPHRASE"
+		},
+		"gate": {
+			"api_key": "af1394f23b92b3d1dbcd556be9ce55e0",
+			"api_secret": "bebc556f2d4fb28ef96531be58b99cd3fe55b265bb5e73cc49e55301d1e8eef6"
+		}
+	},
+
+	"_comment_telegram": "БЛОК УВЕДОМЛЕНИЙ: Настройки для отправки алертов в ваш Telegram-канал или боту",
+	"telegram": {
+		"bot_token": "ТВОЙ_TELEGRAM_BOT_TOKEN_ИЗ_ENV",
+		"chat_id": "ТВОЙ_TELEGRAM_CHAT_ID_ИЗ_ENV"
+	},
+
+	"_comment_system": "СИСТЕМНЫЙ БЛОК: Пути к локальным файлам данных и технические лимиты ОЗУ",
+	"system": {
+		"proxies_relative_path": "config/proxies.txt",
+		"signals_csv_relative_path": "database/signals_history.csv",
+		"max_timestamps": 60,
+		"request_timeout_seconds": 10,
+		"min_24h_volume_usdt": 50000.0
+	},
+
+	"_comment_arbitrage": "БЛОК АЛГОРИТМА: Настройки фильтрации, объемов ордеров и сетевых задержек скринера",
+	"arbitrage": {
+		"min_spread_pct": 0.15,
+		"symbols": [
+			"BTC/USDT", "ETH/USDT", "LTC/USDT", "XRP/USDT", "SOL/USDT", 
+			"DOGE/USDT", "DOT/USDT", "LINK/USDT", "AVAX/USDT", "TRX/USDT", 
+			"ADA/USDT", "APT/USDT", "ALGO/USDT", "ATOM/USDT", "XLM/USDT", 
+			"EOS/USDT", "BONK/USDT" "PEPE/USDT", "WIF/USDT", "SUI/USDT", 
+			"NEAR/USDT", "FTM/USDT","INJ/USDT"
+
+
+
+
+
+		],
+		"base_order_usdt": 500.0,
+		"transfer_fee_usdt": 1.5,
+		"estimated_trade_fee_pct": 0.1,
+		"scan_delay_seconds": 1.0,
+		"anti_ban_delay_seconds": 0.2
+}
