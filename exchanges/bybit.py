@@ -1,7 +1,7 @@
 # Модуль: exchanges/bybit.py
 import os
-import ccxt.pro as ccxt  # Асинхронная библиотека CCXT
-from dotenv import load_dotenv  # Корректный импорт для загрузки переменных из .env
+import ccxt.pro as ccxt # Асинхронная библиотека CCXT
+from dotenv import load_dotenv # Корректный импорт для загрузки переменных из .env
 
 class BybitExchange:
 	"""

@@ -1,27 +1,29 @@
 {
-  "arbitrage": {
-    "min_spread_pct": 0.1,
-    "symbols": [
-      "BTC/USDT",
-      "ETH/USDT",
-      "LTC/USDT",
-      "XRP/USDT",
-      "SOL/USDT",
-      "DOGE/USDT",
-      "DOT/USDT",
-      "LINK/USDT",
-      "AVAX/USDT",
-      "TRX/USDT"
-    ],
-    "transfer_fee_usdt": 1.0,
-    "scan_delay_seconds": 3.0,
-    "anti_ban_delay_seconds": 0.5
-  },
-  "signals": {
-    "price_change_threshold": 1.5,
-    "volume_multiplier": 3.0,
-    "volatility_multiplier": 4.0,
-    "lookback_period": 6
-  }
+	"arbitrage": {
+		"min_spread_pct": -1,
+		"symbols": [
+			"BTC/USDT",
+			"ETH/USDT",
+			"LTC/USDT",
+			"XRP/USDT",
+			"SOL/USDT",
+			"DOGE/USDT",
+			"DOT/USDT",
+			"LINK/USDT",
+			"AVAX/USDT",
+			"TRX/USDT"
+		],
+		"base_order_usdt": 1000,
+		"transfer_fee_usdt": 1.0,
+		"scan_delay_seconds": 3.0,
+		"anti_ban_delay_seconds": 0.5
+	},
+	"signals": {
+		"price_change_threshold": 1.5,
+		"volume_multiplier": 3.0,
+		"volatility_multiplier": 4.0,
+		"lookback_period": 6
+	}
 }
+
 
