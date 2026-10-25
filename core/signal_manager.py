@@ -95,7 +95,7 @@ class SignalManager:
 				elapsed_time = asyncio.get_event_loop().time() - start_time
 				sleep_time = max(0.5, settings.SCAN_INTERVAL - elapsed_time)
 				await asyncio.sleep(sleep_time)
-
+spr
 		except asyncio.CancelledError:
 			print("👋 [СИГНАЛЫ] Получен сигнал на остановку.")
 		except Exception as e:

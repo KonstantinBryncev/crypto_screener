@@ -1,6 +1,6 @@
 {
 	"arbitrage": {
-		"min_spread_pct": -1,
+		"min_spread_pct": -10,
 		"symbols": [
 			"BTC/USDT",
 			"ETH/USDT",
@@ -15,6 +15,7 @@
 		],
 		"base_order_usdt": 1000,
 		"transfer_fee_usdt": 1.0,
+		"estimated_trade_fee_pct": 1,
 		"scan_delay_seconds": 3.0,
 		"anti_ban_delay_seconds": 0.5
 	},
@@ -25,5 +26,3 @@
 		"lookback_period": 6
 	}
 }
-
-

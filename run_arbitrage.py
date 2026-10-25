@@ -4,7 +4,6 @@ import sys
 import logging
 import warnings
 
-logging.getLogger("ccxt").setLevel(logging.CRITICAL)
 logging.getLogger("asyncio").setLevel(logging.CRITICAL)
 logging.getLogger("urllib3").setLevel(logging.CRITICAL)
 warnings.filterwarnings("ignore")

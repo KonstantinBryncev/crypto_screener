@@ -1,96 +1,55 @@
-# Модуль: exchanges/bingx.py
-import ccxt.async_support as ccxt
-from typing import Dict, Optional
-from exchanges.base import BaseExchange
 import asyncio
-import logging
-
-logger = logging.getLogger("BingXExchange")
+from exchanges.base import BaseExchange
 
 class BingXExchange(BaseExchange):
-	"""
-	Класс-коннектор для работы с биржей BingX.
-	Наследуется от BaseExchange и точечно собирает данные для экономии ресурсов.
-	"""
-
 	def __init__(self):
 		super().__init__(exchange_id='bingx')
-		self.name = "bingx"
-		self.api = None
-		# Список целевых монет для арбитража
-		self.target_symbols = ['BTC/USDT', 'ETH/USDT', 'LTC/USDT', 'XRP/USDT', 'SOL/USDT', 'DOGE/USDT', 'DOT/USDT', 'LINK/USDT', 'AVAX/USDT', 'TRX/USDT']
+		self.monitored_symbols = [
+			"BTC/USDT", "ETH/USDT", "LTC/USDT", "XRP/USDT", 
+			"SOL/USDT", "DOGE/USDT", "DOT/USDT", "LINK/USDT", 
+			"AVAX/USDT", "TRX/USDT"
+		]
 
 	async def init_exchange(self):
+		print("✅ [BINGX Direct] Спотовое прямое подключение успешно настроено.")
+
+	async def fetch_order_book(self, symbol: str, limit: int = 5) -> dict:
 		"""
-		Инициализация асинции сессии BingX со спотовыми настройками по умолчанию.
+		Прямой запрос спотового стакана BingX.
 		"""
-		if self.api is None:
-			self.api = ccxt.bingx({
-				'options': {
-					'defaultType': 'spot',   # Работаем строго на спотовом рынке
-					'loadMarkets': False     # Отключаем тяжелые внутренние запросы контрактов swap/*
-				},
-				'enableRateLimit': True,     # Встроенная защита ccxt от Rate Limit
-				'adjustForTimeDifference': True
-			})
-			self.api.timeout = 20000         # Защита от таймаутов сети в РФ
+		# Спотовый формат BingX требует дефис (например, "BTC-USDT")
+		bingx_pair = symbol.upper().replace('/', '-')
+		
+		# ОФИЦИАЛЬНЫЙ ТОРГОВЫЙ API ДОМЕН BINGX
+		url = "https://api.bingx.com"
+		params = {
+			"symbol": bingx_pair,
+			"limit": limit
+		}
+		
+		raw_response = await self.network_client.fetch_json(url, params=params)
+		if not raw_response or 'data' not in raw_response:
+			return None
 			
-		return self.api
-
-	async def fetch_order_book(self, symbol: str, limit: int = 5):
-		"""
-		Безопасное получение стакана для BingX (Арбитраж).
-		"""
-		if not self.api:
-			await self.init_exchange()
-			
-		try:
-			return await self.api.fetch_order_book(symbol, limit=limit)
-		except Exception as e:
-			raise e
-
-	async def _fetch_single_ticker(self, symbol: str) -> Optional[dict]:
-		"""Безопасный точечный запрос тикера одной монеты"""
-		try:
-			if not self.api:
-				await self.init_exchange()
-			ticker = await self.api.fetch_ticker(symbol)
-			if ticker.get('last') is not None:
-				return {
-					'price': float(ticker['last']),
-					'volume': float(ticker.get('quoteVolume', 0.0))
-				}
-		except Exception as e:
-			logger.warning(f"Не удалось получить тикер {symbol} с BingX: {e}")
-		return None
-
-	async def fetch_tickers(self) -> Dict[str, Dict[str, float]]:
-		"""
-		Асинхронно собирает тикеры только для target_symbols параллельными запросами.
-		Идеально для экономии ОЗУ и обхода ограничений общего эндпоинта.
-		"""
-		if not self.api:
-			await self.init_exchange()
+		data = raw_response.get('data', {})
+		if 'bids' not in data or 'asks' not in data:
+			return None
 
 		try:
-			tasks = [self._fetch_single_ticker(symbol) for symbol in self.target_symbols]
-			results = await asyncio.gather(*tasks)
-			
-			valid_tickers = {}
-			for symbol, res in zip(self.target_symbols, results):
-				if res:
-					valid_tickers[symbol] = res
-					
-			return valid_tickers
+			return {
+				'bids': [[float(item[0]), float(item[1])] for item in data.get('bids', []) if item],
+				'asks': [[float(item[0]), float(item[1])] for item in data.get('asks', []) if item],
+				'symbol': symbol.upper(),
+				'timestamp': None,
+				'datetime': None,
+				'contract': False,
+				'linear': False,
+				'inverse': False,
+				'type': 'spot',
+				'spot': True
+			}
+		except Exception:
+			return None
 
-		except Exception as e:
-			logger.error(f"Глобальная ошибка сбора тикеров BingX: {e}")
-			return {}
-
-	async def close(self):
-		"""
-		Закрытие асинхронной HTTP-сессии BingX при остановке бота.
-		"""
-		if self.api:
-			await self.api.close()
-			print("🔌 [BINGX] Асинхронное подключение к API успешно закрыто.")
+	async def fetch_tickers(self) -> dict:
+		return {}

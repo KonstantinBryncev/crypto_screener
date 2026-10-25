@@ -1,88 +1,51 @@
-# Модуль: exchanges/bybit.py
-import os
-import ccxt.pro as ccxt # Асинхронная библиотека CCXT
-from dotenv import load_dotenv # Корректный импорт для загрузки переменных из .env
+import asyncio
+from exchanges.base import BaseExchange
 
-class BybitExchange:
-	"""
-	Класс для взаимодействия с биржей Bybit в реальном (Live) режиме.
-	Ориентирован на работу со спотовым рынком.
-	"""
+class BybitExchange(BaseExchange):
 	def __init__(self):
-		self.api = None
-		
-		# Вычисляем абсолютный путь к файлу .env в корне проекта
-		current_dir = os.path.dirname(os.path.abspath(__file__))
-		project_root = os.path.dirname(current_dir)
-		env_path = os.path.join(project_root, ".env")
-		
-		# Загружаем переменные из .env файла, если он существует
-		if os.path.exists(env_path):
-			load_dotenv(env_path)
+		super().__init__(exchange_id='bybit')
 
 	async def init_exchange(self):
+		print("✅ [BYBIT Direct] Публичный спотовый REST-режим успешно запущен.")
+
+	async def fetch_order_book(self, symbol: str, limit: int = 5) -> dict:
 		"""
-		Инициализация асинхронного подключения к РЕАЛЬНЫМ (Live) серверам Bybit.
+		Прямой запрос спотового стакана Bybit V5.
 		"""
-		# Вытаскиваем API-ключи из загруженного окружения
-		api_key = os.getenv('BYBIT_API_KEY')
-		secret_key = os.getenv('BYBIT_API_SECRET')
+		# Спотовый формат Bybit пишется слитно (например, "BTCUSDT")
+		bybit_pair = symbol.upper().replace('/', '').replace('_', '')
 		
-		# Создаем инстанс ccxt для реального спотового рынка
-		self.api = ccxt.bybit({
-			'apiKey': api_key if api_key else "",
-			'secret': secret_key if secret_key else "",
-			'enableRateLimit': True,
-			'options': {
-				'defaultType': 'spot'  # Принудительно работаем с обычным спотовым рынком
+		# ОФИЦИАЛЬНЫЙ ТОРГОВЫЙ API ДОМЕН BYBIT
+		url = "https://api.bybit.com"
+		params = {
+			"category": "spot",
+			"symbol": bybit_pair,
+			"limit": limit
+		}
+		
+		raw_response = await self.network_client.fetch_json(url, params=params)
+		if not raw_response or raw_response.get('retCode') != 0:
+			return None
+			
+		result = raw_response.get('result', {})
+		if 'b' not in result or 'a' not in result:
+			return None
+			
+		try:
+			return {
+				'bids': [[float(item[0]), float(item[1])] for item in result.get('b', []) if item],
+				'asks': [[float(item[0]), float(item[1])] for item in result.get('a', []) if item],
+				'symbol': symbol.upper(),
+				'timestamp': None,
+				'datetime': None,
+				'contract': False,
+				'linear': False,
+				'inverse': False,
+				'type': 'spot',
+				'spot': True
 			}
-		})
-		
-		# Если ключи отсутствуют, бот всё равно сможет читать публичные стаканы (Order Book),
-		# но приватные методы (запрос баланса, выставление ордеров) работать не будут.
-		if not api_key or not secret_key:
-			print("⚠️ [BYBIT] Предупреждение: API-ключи не найдены в .env. Работа в публичном режиме.")
+		except Exception:
+			return None
 
 	async def fetch_tickers(self) -> dict:
-		"""
-		Публичный метод сбора текущих цен (типеров) для сигнального скринера пампов.
-		Возвращает стандартизированный словарь цен.
-		"""
-		if not self.api:
-			return {}
-		try:
-			# Запрашиваем тикеры только для спотового рынка
-			tickers = await self.api.fetch_tickers(params={'category': 'spot'})
-			result = {}
-			for symbol, ticker in tickers.items():
-				# Фильтруем только пары к USDT
-				if symbol.endswith('/USDT') and ticker.get('last') is not None:
-					result[symbol] = {
-						'price': float(ticker['last']),
-						'volume': float(ticker.get('baseVolume', 0.0)) if ticker.get('baseVolume') else 0.0
-					}
-			return result
-		except Exception as e:
-			# Тихо возвращаем пустой словарь при ошибках сети, чтобы не спамить в консоль
-			return {}
-
-	async def fetch_balance_usdt(self) -> float:
-		"""
-		Приватный метод запроса реального баланса спотового кошелька.
-		Требует наличия корректных ключей в .env.
-		"""
-		if not self.api or not self.api.apiKey:
-			return 0.0
-		try:
-			balance = await self.api.fetch_balance()
-			return float(balance.get('USDT', {}).get('free', 0.0))
-		except Exception:
-			return 0.0
-
-	async def close(self):
-		"""
-		Корректное закрытие асинхронных сетевых сессий (AIOHTTP под капотом CCXT).
-		Предотвращает появление ошибок 'Unclosed client session' при остановке бота.
-		"""
-		if self.api:
-			await self.api.close()
+		return {}

@@ -1,158 +1,147 @@
-# Модуль: core/arbitrage_manager.py
 import asyncio
-from typing import Dict, Optional
-from exchanges.bybit import BybitExchange
-from exchanges.bingx import BingXExchange
-from exchanges.kucoin import KuCoinExchange
-from exchanges.gate import GateExchange
+import json
+import os
 from core.analyzer import ArbitrageAnalyzer
-import logging
-from config.settings import load_bot_config  # Импортируем загрузчик
-
-logger = logging.getLogger("ArbitrageManager")
-logger.setLevel(logging.ERROR)
+from network.client import AsyncHttpClient
 
 class ArbitrageManager:
-	"""
-	Специализированный менеджер ТОЛЬКО для межбиржевого арбитража.
-	Опрашивает стаканы и выводит чистый спред без накопления истории в ОЗУ.
-	"""
 	def __init__(self):
-		# 1. Загружаем настройки из файла config_bot.json
-		self.bot_config = load_bot_config()
-		arb_settings = self.bot_config["arbitrage"]
+		"""
+		Менеджер межбиржевого арбитража криптовалют.
+		Динамически подгружает абсолютно ВСЕ настройки из config_bot.json.
+		"""
+		self.arbitrage_analyzer = ArbitrageAnalyzer()
+		self.network_client = AsyncHttpClient()
+		self.is_running = False
+		
+		# Загружаем конфигурационный файл config_bot.json
+		self.config = self._load_config()
+		arb_settings = self.config.get("arbitrage", {})
+		
+		# Распределяем переменные из твоего файла настроек
+		self.monitored_symbols = arb_settings.get("symbols", [
+			"BTC/USDT", "ETH/USDT", "LTC/USDT", "XRP/USDT", 
+			"SOL/USDT", "DOGE/USDT", "DOT/USDT", "LINK/USDT", 
+			"AVAX/USDT", "TRX/USDT"
+		])
+		self.base_amount_usdt = float(arb_settings.get("base_order_usdt", 1000.0))
+		self.transfer_fee = float(arb_settings.get("transfer_fee_usdt", 1.0))
+		self.scan_delay = float(arb_settings.get("scan_delay_seconds", 3.0))
+		self.min_spread_pct = float(arb_settings.get("min_spread_pct", -1.0))
+		self.trade_fee_pct = float(arb_settings.get("estimated_trade_fee_pct", 0.002))
+		
+		# Динамически подгружаем анти-бан задержку из твоего JSON
+		self.anti_ban_delay = float(arb_settings.get("anti_ban_delay_seconds", 0.5))
 
-		self.bybit = BybitExchange()
-		self.bingx = BingXExchange()
-		self.kucoin = KuCoinExchange()
-		self.gate = GateExchange()
-
-		self.arbitrage_exchanges: Dict[str, object] = {
-			'bybit': self.bybit,
-			'bingx': self.bingx,
-			'kucoin': self.kucoin,
-			'gate': self.gate
-		}
+	def _load_config(self) -> dict:
+		"""Вспомогательный метод для чтения config_bot.json из корня проекта"""
+		current_dir = os.path.dirname(os.path.abspath(__file__))
+		print(current_dir)
+		project_root = os.path.dirname(current_dir)
+		config_path = os.path.join(project_root, "config_bot.json")
 		
-		# 2. Инициализируем анализатор
-		self.arbitrage_analyzer = ArbitrageAnalyzer(min_spread_pct=arb_settings["min_spread_pct"])
-		self.arbitrage_symbols = arb_settings["symbols"]
-		self.network_fees = {"USDT": arb_settings["transfer_fee_usdt"]}
-		
-		# Читаем наш параметр базового ордера
-		self.base_order_usdt = arb_settings.get("base_order_usdt", 1000)
-		
-		# Запоминаем задержки для циклов
-		self.scan_delay = arb_settings["scan_delay_seconds"]
-		self.anti_ban_delay = arb_settings["anti_ban_delay_seconds"]
-		
-		self.is_running: bool = False
-
-	async def start(self):
-		print("🚀 [АРБИТРАЖ] Инициализация подключения к биржам...")
-		for name, ex in self.arbitrage_exchanges.items():
+		if os.path.exists(config_path):
 			try:
-				# 1. Принудительно инициализируем сессию через init_exchange
-				await ex.init_exchange()
-				
-				# 2. Жестко перебиваем настройки ccxt на спот
-				if hasattr(ex, 'api') and ex.api:
-					ex.api.options['defaultType'] = 'spot'
-					ex.api.timeout = 20000  # Защита от медленного интернета
-					
-					# 3. Для Gate.io полностью пропускаем load_markets(), чтобы убрать предупреждения
-					if name != 'gate':
-						try:
-							await ex.api.load_markets()
-						except Exception as inner_e:
-							print(f"⚠️ [СЕТЬ] Предупреждение для {name.upper()} при load_markets: {inner_e}")
-					
-				print(f"✅ Биржа {name.upper()} успешно инициализирована и готова.")
-				await asyncio.sleep(2.0)  # Пауза против Rate Limit (ошибки 429)
-				
+				with open(config_path, "r", encoding="utf-8") as f:
+					return json.load(f)
 			except Exception as e:
-				print(f"❌ Не удалось инициализировать {name.upper()}: {e}")
-				await asyncio.sleep(3.0)
+				print(f"⚠️ Ошибка чтения config_bot.json: {e}")
+		return {}
 
-		self.is_running = True
-		print(f"\n⏱️ [АРБИТРАЖ] Сканер запущен (Базовый ордер: {self.base_order_usdt} USDT). Ожидание сигналов...\n")
-		
+	async def init_all_exchanges(self):
+		print("==================================================")
+		print("✅ [АРБИТРАЖ REST] Все прямые API-шлюзы успешно инициализированы.")
+
+	async def _fetch_bybit(self, session, symbol: str) -> dict:
+		pair = symbol.upper().replace('/', '')
+		url = "https://api.bybit.com"
+		params = {"category": "spot", "symbol": pair, "limit": 5}
 		try:
-			while self.is_running:
-				for symbol in self.arbitrage_symbols:
-					if not self.is_running:
-						break
-					await self._scan_arbitrage_for_symbol(symbol)
-					await asyncio.sleep(self.anti_ban_delay)
-				
-				await asyncio.sleep(self.scan_delay)
-		except asyncio.CancelledError:
+			async with session.get(url, params=params, timeout=5) as resp:
+				if resp.status == 200:
+					data = await resp.json()
+					res = data.get('result', {})
+					if 'b' in res and 'a' in res:
+						return {
+							'bids': [[float(item[0]), float(item[1])] for item in res['b'] if item],
+							'asks': [[float(item[0]), float(item[1])] for item in res['a'] if item]
+						}
+		except Exception:
 			pass
-		except Exception as e:
-			print(f"❌ [ОШИБКА В ЦИКЛЕ АРБИТРАЖА]: {e}")
-		finally:
-			await self.stop()
+		return None
 
-	async def _scan_arbitrage_for_symbol(self, symbol: str):
-		tasks = {}
-		for name, exchange in self.arbitrage_exchanges.items():
-			if hasattr(exchange, 'api') and exchange.api:
-				try:
-					if name == 'bybit':
-						tasks[name] = asyncio.create_task(
-							exchange.api.fetch_order_book(symbol, limit=5, params={
-								'category': 'spot',
-								'baseCoin': None
-							})
-						)
-					elif name == 'kucoin':
-						tasks[name] = asyncio.create_task(
-							exchange.api.fetch_order_book(symbol, limit=20)
-						)
-					elif name == 'gate':
-						# Переводим в btc_usdt формат для спота v4
-						gate_symbol = symbol.replace('/', '_').lower()
-						tasks[name] = asyncio.create_task(
-							exchange.api.fetch_order_book(gate_symbol, limit=5)
-						)
-					elif name == 'bingx':
-						tasks[name] = asyncio.create_task(
-							exchange.api.fetch_order_book(symbol, limit=5)
-						)
-					else:
-						tasks[name] = asyncio.create_task(
-							exchange.api.fetch_order_book(symbol, limit=5)
-						)
-				except Exception:
-					pass
+	async def _fetch_bingx(self, session, symbol: str) -> dict:
+		pair = symbol.upper().replace('/', '-')
+		url = "https://api.bingx.com"
+		params = {"symbol": pair, "limit": 5}
+		try:
+			async with session.get(url, params=params, timeout=5) as resp:
+				if resp.status == 200:
+					data = await resp.json()
+					print(data)
+					res = data.get('data', {})
+					if 'bids' in res and 'asks' in res:
+						return {
+							'bids': [[float(item[0]), float(item[1])] for item in res['bids'] if item],
+							'asks': [[float(item[0]), float(item[1])] for item in res['asks'] if item]
+						}
+		except Exception:
+			pass
+		return None
 
-		if not tasks:
-			return
+	async def _fetch_kucoin(self, session, symbol: str) -> dict:
+		pair = symbol.upper().replace('/', '-')
+		url = "https://api.kucoin.com"
+		params = {"symbol": pair}
+		try:
+			async with session.get(url, params=params, timeout=5) as resp:
+				if resp.status == 200:
+					data = await resp.json()
+					res = data.get('data', {})
+					if 'bids' in res and 'asks' in res:
+						return {
+							'bids': [[float(item[0]), float(item[1])] for item in res['bids'] if item],
+							'asks': [[float(item[0]), float(item[1])] for item in res['asks'] if item]
+						}
+		except Exception:
+			pass
+		return None
 
-		results = await asyncio.gather(*tasks.values(), return_exceptions=True)
+	async def _fetch_gate(self, session, symbol: str) -> dict:
+		pair = symbol.upper().replace('/', '_')
+		url = "https://api.gateio.ws"
+		params = {"currency_pair": pair, "volatility_multiplier	mit": 5}
+		try:
+			async with session.get(url, params=params, timeout=5) as resp:
+				if resp.status == 200:
+					res = await resp.json()
+					if 'bids' in res and 'asks' in res:
+						return {
+							'bids': [[float(item[0]), float(item[1])] for item in res['bids'] if item],
+							'asks': [[float(item[0]), float(item[1])] for item in res['asks'] if item]
+						}
+		except Exception:
+			pass
+		return None
+
+	async def _scan_arbitrage_for_symbol(self, session, symbol: str):
+		# Чтобы не спамить биржи одновременно, запрашиваем их с микропаузами anti_ban
+		ob_bybit = await self._fetch_bybit(session, symbol)
+		await asyncio.sleep(self.anti_ban_delay)
+		
+		ob_bingx = await self._fetch_bingx(session, symbol)
+		await asyncio.sleep(self.anti_ban_delay)
+		
+		ob_kucoin = await self._fetch_kucoin(session, symbol)
+		await asyncio.sleep(self.anti_ban_delay)
+		
+		ob_gate = await self._fetch_gate(session, symbol)
 		
 		orderbooks = {}
-		for name, res in zip(tasks.keys(), results):
-			# ВЫВОДИМ ДИАГНОСТИКУ ДЛЯ GATE.IO В СЫРОМ ВИДЕ:
-			if name == 'gate':
-				print(f"\n🔍 [ОТЛАДКА GATE] Запрашивали {symbol.replace('/', '_').lower()}")
-				if isinstance(res, Exception):
-					print(f"❌ [ОТЛАДКА GATE] Биржа вернула ошибку: {res}")
-				elif res and isinstance(res, dict):
-					print(f"✅ [ОТЛАДКА GATE] Стакан успешно получен! Асков: {len(res.get('asks', []))}, Бидов: {len(res.get('bids', []))}")
-					if len(res.get('asks', [])) > 0:
-						print(f"   Лучший Аск (Продажа): {res['asks'][0][0]}, Лучший Бид (Покупка): {res['bids'][0][0]}")
-				else:
-					print(f"⚠️ [ОТЛАДКА GATE] Неизвестный формат ответа: {res}")
-
-			if isinstance(res, Exception):
-				if "currencies" not in str(res) and "instruments-info" not in str(res):
-					print(f"❌ [СЕТЬ] Ошибка получения стакана {symbol} с биржи {name.upper()}: {res}")
-				continue
-				
-			if res and isinstance(res, dict) and 'asks' in res and 'bids' in res:
-				if len(res['asks']) > 0 and len(res['bids']) > 0:
-					orderbooks[name] = res
+		if ob_bybit: orderbooks['bybit'] = ob_bybit
+		if ob_bingx: orderbooks['bingx'] = ob_bingx
+		if ob_kucoin: orderbooks['kucoin'] = ob_kucoin
+		if ob_gate: orderbooks['gate'] = ob_gate
 
 		if len(orderbooks) < 2:
 			return
@@ -162,32 +151,46 @@ class ArbitrageManager:
 				if ex_a_name == ex_b_name:
 					continue
 				
-				fee = self.network_fees.get("USDT", 1.0)
-				
 				try:
-					signal = self.arbitrage_analyzer.calculate_spot_spread(
+					self.arbitrage_analyzer.calculate_spot_spread(
 						symbol=symbol,
 						exchange_a_name=ex_a_name,
 						orderbook_a=ob_a,
 						exchange_b_name=ex_b_name,
 						orderbook_b=ob_b,
-						transfer_fee=fee
+						transfer_fee=self.transfer_fee,
+						base_volume=self.base_amount_usdt,
+						min_spread_pct=self.min_spread_pct,
+						trade_fee_pct=self.trade_fee_pct
 					)
+				except Exception as analyzer_err:
+					print(f"❌ Ошибка в ArbitrageAnalyzer для пары {symbol}: {analyzer_err}")
 
-					if signal:
-						print(f"🚨 [АРБИТРАЖНЫЙ СИГНАЛ] [{signal['symbol']}]")
-						print(f"📥 Купить на {signal['buy_exchange'].upper()} по {signal['buy_price']}")
-						print(f"📤 Продать на {signal['sell_exchange'].upper()} по {signal['sell_price']}")
-						print(f"📊 Чистый спред: {signal['net_spread_pct']}% | Ожидаемый профит: {signal['net_profit']} USDT\n")
-						
-				except Exception as calc_e:
-					print(f"❌ [РАСЧЕТ] Ошибка в calculate_spot_spread для {symbol}: {calc_e}")
-
-
-					
-
+	async def start(self):
+		self.is_running = True
+		await self.init_all_exchanges()
+		
+		session = await self.network_client.get_session()
+		print(f"\n⏱️ [АРБИТРАЖ] Сканер запущен (Базовый ордер: {self.base_amount_usdt} USDT). Ожидание сигналов...\n")
+		
+		while self.is_running:
+			try:
+				# Последовательно-параллельный обход с анти-бан задержками
+				for symbol in self.monitored_symbols:
+					if not self.is_running:
+						break
+					await self._scan_arbitrage_for_symbol(session, symbol)
+				
+				# Главная задержка круга сканирования из твоего файла конфигурации
+				await asyncio.sleep(self.scan_delay)
+			except asyncio.CancelledError:
+				break
+			except Exception as e:
+				print(f"⚠️ [СКРИНЕР] Критическая ошибка в цикле: {e}")
+				await asyncio.sleep(2)
 
 	async def stop(self):
+		print("\n[MAIN] Завершение работы пользователем...")
 		self.is_running = False
-		await asyncio.gather(*[ex.close() for ex in self.arbitrage_exchanges.values() if hasattr(ex, 'close') and ex.api])
-		print("🛑 [АРБИТРАЖ] Все подключения к биржам закрыты.")
+		await self.network_client.close()
+		print("🚨 [АРБИТРАЖ] Все подключения к биржам закрыты.\n")
