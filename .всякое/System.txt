@@ -1,0 +1,7 @@
+Мои возможности:
+Процессор - AMD Athlon(tm) 64 X2 Dual Core Processor 6000+   3.11 GHz
+Оперативная память - 3,00 ГБ
+Windows 10 Корпоративная 22H2
+Python 3.15.1
+
+

@@ -1,0 +1,42 @@
+macromicro
+
+    {
+      "step": 8,
+      "title": "Применение конфигурации",
+      "description": "Перезапуск системной службы Squid для загрузки новых правил и добавление процесса в автозапуск операционной системы",
+      "commands": [
+        "sudo systemctl restart squid",
+        "c"
+      ]
+    },
+    {
+      "step": 9,
+      "title": "Диагностика",
+      "description": "Проверка текущего статуса работы демона Squid в системе",
+      "commands": [
+        "sudo systemctl status squid"
+      ]
+    }
+  ],
+  "squid_config_file": {
+    "target_path": "/etc/squid/squid.conf",
+    "insert_at_the_top": [
+      "auth_param basic program /usr/lib/squid/basic_ncsa_auth /etc/squid/passwords",
+      "auth_param basic children 5",
+      "auth_param basic realm My Private Proxy Server",
+      "auth_param basic credentialsttl 2 hours",
+      "acl authenticated_users proxy_auth REQUIRED",
+      "http_access allow authenticated_users",
+      "http_access deny all"
+    ],
+    "insert_at_the_bottom": [
+      "forwarded_for off",
+      "request_header_access Via deny all",
+      "request_header_access X-Forwarded-For deny all"
+    ]
+  },
+  "local_testing": {
+    "description": "Команда для внешней проверки работоспособности и анонимности созданного HTTP-прокси (замените 'ваш_пароль' на установленный на шаге 7)",
+    "command": "curl -x http://proxy_user:ваш_пароль@138.249.8.195:3128 https://ifconfig.me"
+  } 
+}

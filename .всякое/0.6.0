@@ -1,0 +1,26 @@
+Usage: curl-cffi <command> [options]
+
+HTTP request CLI with browser impersonation.
+
+HTTP verbs:
+  get, post, put, delete, patch    Make an HTTP request
+  head, options, trace, query      (case-insensitive)
+
+Request items (for HTTP verb commands):
+  Header:Value   HTTP header
+  param==value   Query parameter
+  field=value    Data field
+  field:=json    Raw JSON field
+  @file          File upload
+  +key=value     Cookie
+
+Tools:
+  run FILE                         Run requests from .http or .har file
+  doctor                           Dump diagnostic information
+
+Fingerprints:
+  update                           Update local fingerprints cache
+  list                             List local and native fingerprints
+  config                           Configure API access for Pro fingerprints
+
+Run 'curl-cffi <command> --help' for details on a specific command.

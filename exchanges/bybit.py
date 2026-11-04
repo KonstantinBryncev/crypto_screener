@@ -66,34 +66,6 @@ class BybitExchange(BaseExchange):
 			logger.error(f"Ошибка парсинга стакана Bybit для {symbol}: {e}")
 			return None
 
-	async def fetch_candles(self, symbol: str, timeframe: str = "1m", limit: int = 20) -> Optional[List[List[float]]]:
-		bybit_pair = symbol.upper().replace('/', '').replace('_', '')
-		url = f"{self.base_url}/v5/market/kline"
-		
-		timeframe_mapping = {"1m": "1", "5m": "5", "1h": "60", "1d": "D"}
-		params = {
-			"category": "spot",
-			"symbol": bybit_pair,
-			"interval": timeframe_mapping.get(timeframe, "1"),
-			"limit": limit
-		}
-		raw_response = await self.network_client.fetch_json(url, params=params)
-		
-		if not raw_response or raw_response.get('retCode') != 0:
-			return None
-			
-		try:
-			raw_list = raw_response.get('result', {}).get('list', [])
-			formatted_candles = []
-			for c in reversed(raw_list):
-				if len(c) >= 6:
-					formatted_candles.append([
-						float(c[0]), float(c[1]), float(c[2]), float(c[3]), float(c[4]), float(c[5])
-					])
-			return formatted_candles
-		except Exception as e:
-			logger.error(f"Ошибка парсинга свечей Bybit для {symbol}: {e}")
-			return None
 
 	async def fetch_balances(self) -> Dict[str, float]:
 		if not self.api_key or not self.api_secret:

@@ -1,173 +1,163 @@
+# Модуль: core/arbitrage_manager.py
 import asyncio
-import json
-import os
-import time
-from pathlib import Path
-from core.analyzer import ArbitrageAnalyzer
-from network.client import AsyncHttpClient
+import logging
+from typing import Dict, List
 
-# Импорт конкретных коннекторов бирж
+# Импорт коннекторов бирж
 from exchanges.bybit import BybitExchange
 from exchanges.bingx import BingXExchange
 from exchanges.kucoin import KuCoinExchange
 from exchanges.gate import GateExchange
+from exchanges.okx import OkxExchange
+
+# Импорт модулей анализа и уведомлений
+from core.analyzer import ArbitrageAnalyzer
+from notifications.telegram import TelegramNotifier
+from notifications.console import ConsoleNotifier
+from network.client import AsyncHttpClient
+
+logger = logging.getLogger("ArbitrageManager")
 
 class ArbitrageManager:
 	"""
-	Главный координатор скринера. Динамически собирает инстансы бирж
-	из config_bot.json и управляет асинхронным циклом межбиржевого сканирования.
+	Ядро управления скринером. Инициализирует биржи,
+	координирует асинхронный сбор стаканов и запускает анализ.
 	"""
-	def __init__(self):
-		self.arbitrage_analyzer = ArbitrageAnalyzer()
+	def __init__(self, config: dict):
+		"""
+		Инициализация менеджера, создание объектов бирж и анализатора.
+		"""
+		# Сохраняем переданный словарь конфигурации
+		self.config = config
+		
+		# Извлекаем базовые параметры арбитража
+		arb_config = config.get("arbitrage", {})
+		self.monitored_symbols = arb_config.get("symbols", [])
+		self.scan_delay = arb_config.get("scan_delay_seconds", 1.0)
+		
+		# Берем синглтон HTTP-клиента
 		self.network_client = AsyncHttpClient()
-		self.is_running = False
 		
-		# Загрузка центрального файла конфигурации
-		self.config = self._load_config()
+		# Инициализируем модули вывода уведомлений
+		self.console_notifier = ConsoleNotifier()
 		
-		# Вычисляем корень проекта для динамической сборки путей
-		current_dir = os.path.dirname(os.path.abspath(__file__))
-		self.project_root = Path(os.path.dirname(current_dir))
+		tg_config = config.get("telegram", {})
+		self.tg_notifier = TelegramNotifier(
+			bot_token=tg_config.get("bot_token", ""),
+			chat_id=tg_config.get("chat_id", ""),
+			network_client=self.network_client
+		)
 		
-		# Извлекаем именованные блоки параметров из JSON
-		hosts_settings = self.config.get("hosts", {})
-		exchanges_settings = self.config.get("exchanges", {})
-		arb_settings = self.config.get("arbitrage", {})
-		system_settings = self.config.get("system", {})
+		# Инициализируем математический анализатор и передаем ему нотификатор
+		self.analyzer = ArbitrageAnalyzer()
+		self.analyzer.set_notifier(self.tg_notifier)
 		
-		# Распределяем параметры алгоритма по внутренним переменным
-		self.monitored_symbols = arb_settings.get("symbols", [])
-		self.base_order_usdt = float(arb_settings.get("base_order_usdt", 1000.0))
-		self.transfer_fee_usdt = float(arb_settings.get("transfer_fee_usdt", 1.0))
-		self.scan_delay_seconds = float(arb_settings.get("scan_delay_seconds", 3.0))
-		self.min_spread_pct = float(arb_settings.get("min_spread_pct", 0.5))
-		self.estimated_trade_fee_pct = float(arb_settings.get("estimated_trade_fee_pct", 0.1))
-		self.anti_ban_delay_seconds = float(arb_settings.get("anti_ban_delay_seconds", 0.5))
+		# Словарь для хранения активных объектов бирж
+		self.exchanges = {}
+		self._init_exchange_connectors()
 
-		# Инициализируем системные лимиты
-		self.max_timestamps = int(system_settings.get("max_timestamps", 60))
-		self.min_24h_volume = float(system_settings.get("min_24h_volume_usdt", 50000.0))
-
-		# Глобальный пул объектов коннекторов бирж
-		self.exchanges = {
-			"bybit": BybitExchange(
-				network_client=self.network_client,
-				base_url=str(hosts_settings.get("bybit")),
-				monitored_symbols=self.monitored_symbols,
-				api_key=exchanges_settings.get("bybit", {}).get("api_key", ""),
-				api_secret=exchanges_settings.get("bybit", {}).get("api_secret", "")
-			),
-			"bingx": BingXExchange(
-				network_client=self.network_client,
-				base_url=str(hosts_settings.get("bingx")),
-				monitored_symbols=self.monitored_symbols,
-				api_key=exchanges_settings.get("bingx", {}).get("api_key", ""),
-				api_secret=exchanges_settings.get("bingx", {}).get("api_secret", "")
-			),
-			"kucoin": KuCoinExchange(
-				network_client=self.network_client,
-				base_url=str(hosts_settings.get("kucoin")),
-				monitored_symbols=self.monitored_symbols,
-				api_key=exchanges_settings.get("kucoin", {}).get("api_key", ""),
-				api_secret=exchanges_settings.get("kucoin", {}).get("api_secret", ""),
-				api_passphrase=exchanges_settings.get("kucoin", {}).get("passphrase", "")
-			),
-			"gate": GateExchange(
-				network_client=self.network_client,
-				base_url=str(hosts_settings.get("gate")),
-				monitored_symbols=self.monitored_symbols,
-				api_key=exchanges_settings.get("gate", {}).get("api_key", ""),
-				api_secret=exchanges_settings.get("gate", {}).get("api_secret", "")
-			)
+	def _init_exchange_connectors(self):
+		"""Внутренний метод сборки коннекторов на основе config_bot.json"""
+		hosts = self.config.get("hosts", {})
+		exch_creds = self.config.get("exchanges", {})
+		
+		# Список поддерживаемых бирж и их классов
+		exchange_mapping = {
+			"bybit": BybitExchange,
+			"bingx": BingXExchange,
+			"kucoin": KuCoinExchange,
+			"gate": GateExchange,
+			"okx": OkxExchange
 		}
-
-	def _load_config(self) -> dict:
-		"""Вспомогательный метод для чтения config_bot.json из корня проекта"""
-		current_dir = os.path.dirname(os.path.abspath(__file__))
-		project_root = os.path.dirname(current_dir)
-		config_path = os.path.join(project_root, "config_bot.json")
 		
-		if os.path.exists(config_path):
-			try:
-				with open(config_path, "r", encoding="utf-8") as f:
-					return json.load(f)
-			except Exception as e:
-				print(f"⚠️ Ошибка чтения config_bot.json: {e}")
-		return {}
-
-	async def init_all_exchanges(self):
-		"""Вызывает лог готовности для каждого коннектора"""
-		for ex_name, ex_instance in self.exchanges.items():
-			await ex_instance.init_exchange()
-		print("==================================================")
-		print("✅ [АРБИТРАЖ REST] Все авторизованные API-шлюзы успешно инициализированы.")
-
-	async def _scan_arbitrage_for_symbol(self, symbol: str):
-		"""Последовательный опрос торговых шлюзов бирж и запуск калькуляции спредов."""
-		orderbooks = {}
-		
-		# Опрашиваем каждую биржу из нашего пула
-		for ex_name, ex_instance in self.exchanges.items():
-			try:
-				ob = await ex_instance.fetch_order_book(symbol)
-				if ob and ob.get('bids') and ob.get('asks'):
-					orderbooks[ex_name] = ob
-			except Exception as e:
-				print(f"⚠️ Ошибка сбора стакана с биржи {ex_name} для {symbol}: {e}")
-			
-			# Пауза для защиты от Rate Limit (Rate limit / Cloudflare)
-			await asyncio.sleep(self.anti_ban_delay_seconds)
-		
-		# Если стаканы ответили меньше чем от 2 бирж — арбитраж невозможен
-		if len(orderbooks) < 2:
-			return
-
-		# ИСПРАВЛЕНО И ВОССТАНОВЛЕНО: Двойной перекрестный цикл для математического анализа спредов
-		for ex_a_name, ob_a in orderbooks.items():
-			for ex_b_name, ob_b in orderbooks.items():
-				# Запрещаем сравнивать биржу саму с собой
-				if ex_a_name == ex_b_name:
-					continue
+		for exch_id, exch_class in exchange_mapping.items():
+			if exch_id in hosts:
+				creds = exch_creds.get(exch_id, {})
 				
-				# Передаем пары стаканов в математическое ядро для поиска чистой прибыли
-				self.arbitrage_analyzer.calculate_spot_spread(
-					symbol=symbol,
-					exchange_a_name=ex_a_name,
-					orderbook_a=ob_a,
-					exchange_b_name=ex_b_name,
-					orderbook_b=ob_b,
-					transfer_fee=self.transfer_fee_usdt,
-					base_volume=self.base_order_usdt,
-					min_spread_pct=self.min_spread_pct,
-					trade_fee_pct=self.estimated_trade_fee_pct
-				)
+				# Собираем базовые именованные аргументы для конструктора биржи
+				kwargs = {
+					"network_client": self.network_client,
+					"base_url": hosts[exch_id],
+					"monitored_symbols": self.monitored_symbols,
+					"api_key": creds.get("api_key", ""),
+					"api_secret": creds.get("api_secret", "")
+				}
+				
+				# Добавляем специфичные параметры авторизации, если они нужны бирже
+				if "passphrase" in creds:
+					kwargs["api_passphrase"] = creds.get("passphrase", "")
+					
+				# Создаем объект коннектора
+				self.exchanges[exch_id] = exch_class(**kwargs)
 
 	async def start(self):
-		"""Запуск бесконечного асинхронного цикла межбиржевого сканирования."""
-		self.is_running = True
-		await self.init_all_exchanges()
+		"""Главный бесконечный цикл асинхронного сканирования рынков"""
+		print("🚀 [МЕНЕДЖЕР] Асинхронный запуск всех коннекторов...", flush=True)
 		
-		await self.network_client.get_session()
-		print(f"\n⏱️ [АРБИТРАЖ] Сканер запущен (Базовый ордер: {self.base_order_usdt} USDT). Ожидание сигналов...\n", flush=True)
+		# Параллельно вызываем метод init_exchange для каждой биржи
+		init_tasks = [exch.init_exchange() for exch in self.exchanges.values()]
+		await asyncio.gather(*init_tasks)
 		
-		while self.is_running:
+		await self.tg_notifier.send_message("🔔 *Система межбиржевого арбитража успешно запущена и ведет мониторинг!*")
+		print("🟢 [МЕНЕДЖЕР] Скринер успешно начал циклическое сканирование стаканов.", flush=True)
+		
+		while True:
 			try:
+				# Перебираем все торговые пары из конфига
 				for symbol in self.monitored_symbols:
-					if not self.is_running:
-						break
-					await self._scan_arbitrage_for_symbol(symbol)
+					orderbooks = {}
+					
+					# Собираем задачи на опрос стаканов со всех бирж параллельно
+					tasks = {}
+					for exch_id, exch_obj in self.exchanges.items():
+						tasks[exch_id] = exch_obj.fetch_order_book(symbol, limit=5)
+						
+					# Выполняем запросы
+					results = await asyncio.gather(*tasks.values(), return_exceptions=True)
+					
+					# Сопоставляем результаты с ID бирж
+					for exch_id, orderbook in zip(tasks.keys(), results):
+						if orderbook and not isinstance(orderbook, Exception):
+							orderbooks[exch_id] = orderbook
+							
+					# Если стаканы получены хотя бы от двух бирж — передаем их в анализатор
+					if len(orderbooks) >= 2:
+						# Перебираем пары бирж для поиска спреда
+						exch_names = list(orderbooks.keys())
+						for i in range(len(exch_names)):
+							for j in range(i + 1, len(exch_names)):
+								ex_a = exch_names[i]
+								ex_b = exch_names[j]
+								
+								# Вызываем метод расчета (который мы исправили в analyzer.py)
+								self.analyzer.calculate_spot_spread(
+									symbol=symbol,
+									exchange_a_name=ex_a,
+									orderbook_a=orderbooks[ex_a],
+									exchange_b_name=ex_b,
+									orderbook_b=orderbooks[ex_b],
+									transfer_fee=self.config.get("arbitrage", {}).get("transfer_fee_usdt", 1.5),
+									base_volume=self.config.get("arbitrage", {}).get("base_order_usdt", 500.0),
+									min_spread_pct=self.config.get("arbitrage", {}).get("min_spread_pct", 0.15),
+									trade_fee_pct=self.config.get("arbitrage", {}).get("estimated_trade_fee_pct", 0.1),
+									crypto_fees_dict=self.config.get("arbitrage", {}).get("network_fees_in_crypto", {})
+								)
+								
+				# Задержка между итерациями общего круга сканирования
+				await asyncio.sleep(self.scan_delay)
 				
-				# Пауза между полными кругами опроса монет
-				await asyncio.sleep(self.scan_delay_seconds)
 			except asyncio.CancelledError:
 				break
 			except Exception as e:
-				print(f"⚠️ [СКРИНЕР] Критическая ошибка в цикле: {e}")
+				logger.error(f"Ошибка в цикле сканирования менеджера: {e}")
 				await asyncio.sleep(2)
 
 	async def stop(self):
-		"""Безопасная остановка менеджера с закрытием сессии соединений."""
-		print("\n[MAIN] Завершение работы пользователем...")
-		self.is_running = False
+		"""Корректная остановка модулей при закрытии программы"""
+		print("\n🛑 [МЕНЕДЖЕР] Инициирована остановка ядра скринера...", flush=True)
+		try:
+			await self.tg_notifier.send_message("⚠️ *Система межбиржевого арбитража остановлена разработчиком.*")
+		except Exception:
+			pass
+		# Закрываем сессии через центральный HttpClient
 		await self.network_client.close()
-		print("🚨 [АРБИТРАЖ] Все подключения к биржам закрыты.\n")

@@ -7,7 +7,6 @@ import base64
 from typing import Dict, Any, List, Optional
 from exchanges.base import BaseExchange
 
-# Настраиваем локальный логгер для модуля KuCoin
 logger = logging.getLogger("KuCoinExchange")
 
 class KuCoinExchange(BaseExchange):
@@ -16,15 +15,10 @@ class KuCoinExchange(BaseExchange):
 	Все параметры (хост, пары) динамически подтягиваются из config_bot.json.
 	"""
 	
-	# ИСПРАВЛЕНО: Явно добавлены аргументы base_url и monitored_symbols в конструктор
 	def __init__(self, network_client, base_url: str, monitored_symbols: List[str], api_key: str = "", api_secret: str = "", api_passphrase: str = ""):
 		"""
 		Инициализация коннектора KuCoin.
-		:param base_url: Базовый хост из config_bot.json
-		:param monitored_symbols: Список отслеживаемых пар из config_bot.json
-		:param api_passphrase: Дополнительный пароль к API (Passphrase), требуемый KuCoin.
 		"""
-		# Передаем конфигурационные параметры в родительский класс base.py
 		super().__init__(exchange_id='kucoin', base_url=base_url, monitored_symbols=monitored_symbols)
 		
 		self.network_client = network_client
@@ -36,12 +30,11 @@ class KuCoinExchange(BaseExchange):
 		"""Вызывается при старте ядра скринера для подтверждения инициализации модуля."""
 		print(f"✅ [KUCOIN Direct] Спотовое подключение запущено на хосте: {self.base_url}")
 
-
-	def _generate_signature(self, timestamp: str, method: str, endpoint: str, body: str = "") -> str:
+	def _generate_signature(self, timestamp: str, method: str, endpoint_with_params: str, body: str = "") -> str:
 		"""
 		Внутренний метод генерации подписи Base64 HMAC-SHA256 по стандартам KuCoin.
 		"""
-		str_to_sign = timestamp + method + endpoint + body
+		str_to_sign = str(timestamp) + str(method).upper() + str(endpoint_with_params) + str(body)
 		signature = hmac.new(
 			self.api_secret.encode('utf-8'),
 			str_to_sign.encode('utf-8'),
@@ -49,45 +42,46 @@ class KuCoinExchange(BaseExchange):
 		).digest()
 		return base64.b64encode(signature).decode('utf-8')
 
-	def _generate_passphrase_signature(self) -> str:
-		"""
-		Шифрует пароль API (Passphrase), что является обязательным требованием KuCoin.
-		"""
-		signature = hmac.new(
-			self.api_secret.encode('utf-8'),
-			self.api_passphrase.encode('utf-8'),
-			hashlib.sha256
-		).digest()
-		return base64.b64encode(signature).decode('utf-8')
+		def _generate_passphrase_signature(self) -> str:
+				"""
+				Возвращает пароль API (Passphrase) в формате V1 API для KuCoin.
+				Если V2 (HMAC) вызывает 401 ошибку, то по спецификации V1 
+				передается чистая строка фразы-пароля.
+				"""
+				# Зачищаем строку от пробелов и кавычек
+				clean_passphrase = str(self.api_passphrase).strip().replace('"', '').replace("'", "")
+				
+				# Отдаем чистый текст — это решает проблему 401 для V1-ключей KuCoin
+				return clean_passphrase
 
 	async def fetch_order_book(self, symbol: str, limit: int = 5) -> Optional[dict]:
 		"""
 		Прямой асинхронный запрос спотового стакана KuCoin.
 		"""
-		# Формат KuCoin спот требует дефис (например, "BTC-USDT")
 		kucoin_pair = symbol.upper().replace('/', '-')
-		
-		# Полный URL к эндпоинту частично агрегированного стакана (так быстрее и меньше весит)
 		url = f"{self.base_url}/api/v1/market/orderbook/level2_20"
 		params = {"symbol": kucoin_pair}
 		
-		# Отправляем асинхронный запрос
 		raw_response = await self.network_client.fetch_json(url=url, method="GET", params=params)
 
-		
-		# Проверяем успешность ответа по внутреннему коду KuCoin (строка "200000")
-		if not raw_response or raw_response.get('code') != '200000':
+		if not raw_response or not isinstance(raw_response, dict) or raw_response.get('code') != '200000':
 			return None
 			
-		data = raw_response.get('data', {}) # Извлекаем объект data
-		if 'bids' not in data or 'asks' not in data: # Проверяем наличие массивов bids и asks
+		data = raw_response.get('data', {}) 
+		
+		if not data or not isinstance(data, dict) or 'bids' not in data or 'asks' not in data: 
 			return None
 			
 		try:
-			# Парсим массивы цен и объемов KuCoin
+			raw_bids = data.get('bids', [])
+			raw_asks = data.get('asks', [])
+			
+			if not isinstance(raw_bids, list) or not isinstance(raw_asks, list):
+				return None
+
 			return {
-				'bids': [[float(item[0]), float(item[1])] for item in data.get('bids', []) if item],
-				'asks': [[float(item[0]), float(item[1])] for item in data.get('asks', []) if item],
+				'bids': [[float(item[0]), float(item[1])] for item in raw_bids if item and isinstance(item, list) and len(item) >= 2],
+				'asks': [[float(item[0]), float(item[1])] for item in raw_asks if item and isinstance(item, list) and len(item) >= 2],
 				'symbol': symbol.upper(),
 				'timestamp': int(data.get('time', time.time() * 1000)),
 				'datetime': None,
@@ -101,50 +95,6 @@ class KuCoinExchange(BaseExchange):
 			logger.error(f"Ошибка парсинга типов стакана KuCoin для {symbol}: {e}")
 			return None
 
-	async def fetch_candles(self, symbol: str, timeframe: str = "1m", limit: int = 20) -> Optional[List[List[float]]]:
-		"""
-		Запрос исторических свечей KuCoin для сигнального скринера.
-		"""
-		kucoin_pair = symbol.upper().replace('/', '-')
-		url = f"{self.base_url}/api/v1/market/candles"
-		
-		# Маппинг стандартных таймфреймов под кодировки KuCoin
-		tf_map = {"1m": "1min", "5m": "5min", "15m": "15min", "1h": "1hour", "1d": "1day"}
-		
-		# Рассчитываем временные рамки, чтобы разгрузить сервер от лишних данных
-		start_time = int(time.time()) - (limit * 60) # Приблизительное начало
-		
-		params = {
-			"symbol": kucoin_pair,
-			"type": tf_map.get(timeframe, "1min"),
-			"startAt": start_time
-		}
-		
-		raw_response = await self.network_client.fetch_json(url, params=params)
-		if not raw_response or raw_response.get('code') != '200000':
-			return None
-			
-		try:
-			# KuCoin возвращает список: [time, open, close, high, low, volume, turnover]
-			# Данные идут от новых к старым, разворачиваем reversed()
-			raw_list = raw_response.get('data', [])
-			
-			formatted_candles = []
-			for c in reversed(raw_list[:limit]):
-				if len(c) >= 6:
-					formatted_candles.append([
-						float(c[0]) * 1000,  # Секунды в миллисекунды
-						float(c[1]),         # Open
-						float(c[3]),         # High (Индекс 3)
-						float(c[4]),         # Low (Индекс 4)
-						float(c[2]),         # Close (Индекс 2)
-						float(c[5])          # Volume (Индекс 5)
-					])
-			return formatted_candles
-		except Exception as e:
-			logger.error(f"Ошибка при парсинге свечей KuCoin для {symbol}: {e}")
-			return None
-
 	async def fetch_balances(self) -> Dict[str, float]:
 		"""
 		Запрашивает текущие доступные балансы ТОРГОВОГО (trade) аккаунта KuCoin.
@@ -153,41 +103,47 @@ class KuCoinExchange(BaseExchange):
 			return {"USDT": 0.0}
 			
 		endpoint = "/api/v1/accounts"
-		# Для спотовых ордеров тип аккаунта на KuCoin называется 'trade'
-		url = f"{self.base_url}{endpoint}?type=trade"
+		url = f"{self.base_url}{endpoint}"  # ИСПРАВЛЕНО: Чистый URL без ?type=trade
 		
+		query_params = {"type": "trade"}
+		endpoint_with_params = f"{endpoint}?type=trade"
 		timestamp = str(int(time.time() * 1000))
-		# Генерируем подпись для GET-запроса (параметр '?type=trade' входит в сигнатуру)
-		signature = self._generate_signature(timestamp, "GET", f"{endpoint}?type=trade")
+		
+		signature = self._generate_signature(timestamp, "GET", endpoint_with_params, body="")
 		passphrase_sign = self._generate_passphrase_signature()
 		
 		headers = {
-			"KC-API-KEY": self.api_key,
-			"KC-API-SIGN": signature,
-			"KC-API-TIMESTAMP": timestamp,
-			"KC-API-PASSPHRASE": passphrase_sign,
+			"KC-API-KEY": str(self.api_key).strip(),
+			"KC-API-SIGN": str(signature),
+			"KC-API-TIMESTAMP": str(timestamp),
+			"KC-API-PASSPHRASE": str(passphrase_sign),
 			"KC-API-KEY-VERSION": "2",
 			"Content-Type": "application/json"
 		}
 		
-		raw_response = await self.network_client.fetch_json(url, headers=headers)
+		raw_response = await self.network_client.fetch_json(url=url, method="GET", params=query_params, headers=headers)
 		balances = {"USDT": 0.0}
 		
-		if not raw_response or raw_response.get('code') != '200000':
+		if not raw_response or not isinstance(raw_response, dict):
+			return balances
+			
+		if raw_response.get('code') != '200000':
 			return balances
 			
 		try:
 			data_list = raw_response.get('data', [])
 			for item in data_list:
 				asset_name = item.get('currency', '').upper()
-				# available - доступно для сделок, balance - общий с учетом замороженных в ордерах
 				available_balance = float(item.get('available', 0.0))
-				balances[asset_name] = available_balance
+				if available_balance > 0:
+					balances[asset_name] = available_balance
 				
 			return balances
 		except Exception as e:
 			logger.error(f"Ошибка при обработке приватных балансов KuCoin: {e}")
 			return balances
+
+
 
 	async def fetch_tickers(self) -> dict:
 		"""Резервный метод структуры интерфейса."""
