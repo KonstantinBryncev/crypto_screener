@@ -37,5 +37,11 @@
 		"loop_delay_seconds": 1.0,
 		"snapshot_interval_minutes": 10,
 		"enable_telegram_alerts": true
-	}
+	},
+	"postgres": {
+		"dbname": "crypto_db",
+		"user": "postgres",
+		"password": "CryptoDB_2026_Secure",
+		"host": "localhost",
+		"port": 5432	
 }
