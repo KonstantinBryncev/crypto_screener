@@ -1,60 +1,16 @@
-# Файл в корне проекта: migrate_csv.py
-import os
-import csv
-import json
-import psycopg2
-from database.storage import DBStorage
-
-# Тот самый SQL-код структуры таблиц, теперь он создаётся автоматически!
-INIT_DB_SQL = """
-CREATE TABLE IF NOT EXISTS market_alerts (
-    id BIGSERIAL PRIMARY KEY,
-    timestamp TIMESTAMPTZ NOT NULL,
-    alert_type VARCHAR(20) NOT NULL,
-    symbol VARCHAR(30) NOT NULL,
-    direction VARCHAR(50) NOT NULL,
-    delta_pct NUMERIC(12, 4) NOT NULL,
-    main_metric TEXT NOT NULL,
-    volume_info TEXT
-);
-
-CREATE TABLE IF NOT EXISTS asset_prices_history (
-    id BIGSERIAL PRIMARY KEY,
-    timestamp TIMESTAMPTZ NOT NULL,
-    symbol VARCHAR(30) NOT NULL,
-    exchange VARCHAR(30) NOT NULL,
-    current_price NUMERIC(20, 10) NOT NULL,
-    change_pct_5m NUMERIC(6, 3),
-    change_pct_1h NUMERIC(6, 3),
-    volume_24h NUMERIC(24, 4)
-);
-
-CREATE TABLE IF NOT EXISTS trade_signals (
-    id BIGSERIAL PRIMARY KEY,
-    timestamp TIMESTAMPTZ NOT NULL,
-    strategy_name VARCHAR(50) NOT NULL,
-    symbol VARCHAR(30) NOT NULL,
-    buy_exchange VARCHAR(30) NOT NULL,
-    sell_exchange VARCHAR(30) DEFAULT NULL,
-    potential_profit_pct NUMERIC(6, 3),
-    status VARCHAR(20) DEFAULT 'SIGNAL',
-    trigger_conditions JSONB
-);
-
-CREATE INDEX IF NOT EXISTS idx_alerts_ts ON market_alerts(timestamp);
-CREATE INDEX IF NOT EXISTS idx_prices_ts_sym ON asset_prices_history(timestamp, symbol);
-CREATE INDEX IF NOT EXISTS idx_signals_strat_ts ON trade_signals(strategy_name, timestamp);
-"""
-
-def load_config():
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    config_path = os.path.join(base_dir, "config", "config_bot.json")
-    with open(config_path, "r", encoding="utf-8") as f:
-        return json.load(f)
-
 def migrate():
     print("🚀 [ШАГ 1] Подключение к PostgreSQL и создание структуры таблиц...")
     config = load_config()
+    
+    # Жёстко зашиваем пароль для мигратора, чтобы не зависеть от JSON-файла сервера
+    if "postgres" not in config:
+        config["postgres"] = {}
+    config["postgres"]["password"] = "CryptoDB_2026_Secure"
+    config["postgres"]["dbname"] = "crypto_db"
+    config["postgres"]["user"] = "postgres"
+    config["postgres"]["host"] = "localhost"
+    config["postgres"]["port"] = 5432
+    
     storage = DBStorage(config)
     
     # Автоматически создаем таблицы в базе данных (Аналог Django migrate)
@@ -92,6 +48,3 @@ def migrate():
         print(f"🎉 [МИГРАЦИЯ ЗАВЕРШЕНА] Успешно перенесено строк в базу: {count}")
     else:
         print("ℹ️ Старый файл истории сигналов не найден, создана пустая база данных.")
-
-if __name__ == "__main__":
-    migrate()
