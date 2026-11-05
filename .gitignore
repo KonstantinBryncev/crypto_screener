@@ -1,17 +1,22 @@
-text
-# Виртуальное окружение
-.venv/
+# Конфигурация с приватными API-ключами и VLESS-ссылкой
+config/config_bot.json
+config/vpn_setting.json
+config.json
+
+# Тяжелые серверные логи и дампы данных
+*.log
+*.jsonl
+system_errors.log
+signals.jsonl
+prices_10m.jsonl
+orderbooks_raw.jsonl
+
+# Виртуальное окружение Python
 venv/
+.venv/
 __pycache__/
 *.pyc
 
-# Конфиги с ключами и личными путями
-config/config_bot.json
-config/*.json
-
-# Логи и временные файлы ядра Xray
-bin/xray.exe
-bin/xray
-logs/
-*.log
-Используйте код с осторожностью.
+# Системные файлы Windows
+Thumbs.db
+desktop.ini

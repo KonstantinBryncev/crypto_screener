@@ -1,74 +1,41 @@
 {
-	"hosts": {
-		"bybit": "https://api.bybit.com",
-		"bingx": "https://open-api.bingx.com",
-		"kucoin": "https://api.kucoin.com",
-		"gate": "https://api.gateio.ws/api/v4",
-		"okx": "https://openapi.okx.com"
+	"exchanges": [
+		"binance",
+		"bybit",
+		"gateio",
+		"kucoin"
+	],
+	"pairs": [
+		"BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "ADAUSDT",
+		"DOTUSDT", "AVAXUSDT", "LINKUSDT", "DOGEUSDT", "MATICUSDT",
+		"UNIUSDT", "LTCUSDT", "ATOMUSDT", "TRXUSDT", "BCHUSDT",
+		"SHIBUSDT", "NEARUSDT", "FTMUSDT", "ALGOUSDT", "FILUSDT",
+		"APEUSDT", "SANDUSDT", "MANAUSDT", "GALAUSDT", "CHZUSDT",
+		"DYDXUSDT", "OPUSDT", "APTUSDT", "ARBUSDT", "SUIUSDT"
+	],
+	"arbitrage_logic": {
+		"min_spread_percent": 0.15,
+		"max_spread_percent": 5.0,
+		"min_volume_usdt": 500.0
 	},
-	"telegram": {
-		"bot_token": "",
-		"chat_id": "",
-		"telegram_api_url": "https://api/telegram.org"
-	},
-	"network": {
-		"vless_link": "vless://8df80b42-8811-4ad3-a9c0-3b40f8e23c63@92.118.168.39:2185?authority=&encryption=mlkem768x25519plus.native.0rtt.ybtxiGd0D2J4URw5qfaYQtxQ8apR63e9sljLQxk3yEU&flow=xtls-rprx-vision&fp=chrome&pbk=rGx4PMUKoEDKoeMK_-ZTwfQs1Y-5wXgnQdULndofdg8&security=reality&serviceName=&sid=2b403f2d2b&sni=://sony-europe.com&spx=%2Feeba8408296bc2e&support-x25519mlkem768=true&type=grpc#neuroreality-Kirpich%40Notebook.com",
-		"xray_bin_path": "bin/xray.exe",
-		"config_output_path": "config.json"
-	},
-	"exchanges": {
-		"bybit": {
-			"api_key": "",
-			"api_secret": ""
-		},
-		"bingx": {
-			"api_key": "",
-			"api_secret": ""
-		},
-		"kucoin": {
-			"api_key": "",
-			"api_secret": "",
-			"passphrase": ""
-		},
-		"gate": {
-			"api_key": "",
-			"api_secret": ""
-		},
-		"okx": {
-			"api_key": "",
-			"api_secret": "",
-			"passphrase": ""
-		}
-	},
-	"system": {
-		"proxies_relative_path": "config/proxies.txt",
-		"signals_csv_relative_path": "database/signals_history.csv",
-		"max_timestamps": 60,
-		"request_timeout_seconds": 10,
-		"min_24h_volume_usdt": 50000.0
-	},
-	"arbitrage": {
-		"min_spread_pct": 0.15,
-		"symbols": [
-			"BTC/USDT", "ETH/USDT", "LTC/USDT", "XRP/USDT", "SOL/USDT", 
-			"DOGE/USDT", "DOT/USDT", "LINK/USDT", "AVAX/USDT", "TRX/USDT", 
-			"ADA/USDT", "APT/USDT", "ALGO/USDT", "ATOM/USDT", "XLM/USDT", 
-			"EOS/USDT", "BONK/USDT", "PEPE/USDT", "WIF/USDT", "SUI/USDT", 
-			"NEAR/USDT", "FTM/USDT", "INJ/USDT", "POL/USDT", "SEI/USDT",
-			"HBAR/USDT", "VET/USDT", "ICP/USDT", "OP/USDT", "ARB/USDT"
-		],
+	"trading_settings": {
 		"base_order_usdt": 500.0,
 		"transfer_fee_usdt": 1.5,
 		"estimated_trade_fee_pct": 0.1,
 		"scan_delay_seconds": 10,
-		"anti_ban_delay_seconds": 1,
-		"network_fees_in_crypto": {
-			"BTC": 0.0005, "ETH": 0.003, "LTC": 0.001, "XRP": 0.2, "SOL": 0.01,
-			"DOGE": 2.0, "DOT": 0.1, "LINK": 0.5, "AVAX": 0.01, "TRX": 10.0,
-			"ADA": 1.0, "APT": 0.01, "ALGO": 0.1, "ATOM": 0.01, "XLM": 0.02,
-			"EOS": 0.1, "BONK": 20000.0, "PEPE": 250000.0, "WIF": 0.2, "SUI": 0.1,
-			"NEAR": 0.05, "FTM": 0.5, "INJ": 0.05, "POL": 1.0, "SEI": 0.5,
-			"HBAR": 1.0, "VET": 20.0, "ICP": 0.05, "OP": 0.5, "ARB": 1.0
-		}
+		"anti_ban_delay_seconds": 1
+	},
+	"network_fees_in_crypto": {
+		"BTC": 0.0005, "ETH": 0.003, "LTC": 0.001, "XRP": 0.2, "SOL": 0.01,
+		"DOGE": 2.0, "DOT": 0.1, "LINK": 0.5, "AVAX": 0.01, "TRX": 10.0,
+		"ADA": 1.0, "APT": 0.01, "ALGO": 0.1, "ATOM": 0.01, "XLM": 0.02,
+		"EOS": 0.1, "BONK": 20000.0, "PEPE": 250000.0, "WIF": 0.2, "SUI": 0.1,
+		"NEAR": 0.05, "FTM": 0.5, "INJ": 0.05, "POL": 1.0, "SEI": 0.5,
+		"HBAR": 1.0, "VET": 20.0, "ICP": 0.05, "OP": 0.5, "ARB": 1.0
+	},
+	"system_settings": {
+		"loop_delay_seconds": 1.0,
+		"snapshot_interval_minutes": 10,
+		"enable_telegram_alerts": true
 	}
 }

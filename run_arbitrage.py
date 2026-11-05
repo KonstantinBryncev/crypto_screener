@@ -1,19 +1,58 @@
 # run_arbitrage.py
-# run_arbitrage.py
 import sys
-import asyncio  # <-- ВОТ ЭТУ СТРОКУ НУЖНО ДОБАВИТЬ СЮДА
+import asyncio
 import logging
 import warnings
 import os
 import json
+from datetime import datetime
 from core.arbitrage_manager import ArbitrageManager
 from network.client import AsyncHttpClient
 
-# ОТКЛЮЧЕНИЕ ШУМА В ЛОГАХ БИБЛИОТЕК
+# =====================================================================
+# НАСТРОЙКА БЕЗОПАСНОГО ЛОГИРОВАНИЯ И СБОРА ДАННЫХ ДЛЯ POSTGRESQL
+# =====================================================================
+# Пишем в системный лог только WARNING и критические ошибки (без фанатизма)
+logging.basicConfig(
+    level=logging.WARNING, 
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.FileHandler("system_errors.log", encoding="utf-8"),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# ОТКЛЮЧЕНИЕ ШУМА В ЛОГАХ СТАНДАРТНЫХ БИБЛИОТЕК
 logging.getLogger("asyncio").setLevel(logging.CRITICAL)
 logging.getLogger("urllib3").setLevel(logging.CRITICAL)
 warnings.filterwarnings("ignore")
 
+def save_market_data(payload_data, data_type):
+    """
+    Разделяет потоки данных на 3 разных файла:
+    - 'signal'    -> сигналы арбитража (редко, максимальная ценность)
+    - 'snapshot'  -> срез цен всех монет раз в 10 минут
+    - 'orderbook' -> сырые стаканы и тики от постоянного опроса (тяжелый лог)
+    """
+    files_map = {
+        "signal": "signals.jsonl",
+        "snapshot": "prices_10m.jsonl",
+        "orderbook": "orderbooks_raw.jsonl"
+    }
+    file_name = files_map.get(data_type, "other_raw_dump.jsonl")
+    
+    entry = {
+        "timestamp": datetime.utcnow().isoformat(),  # Время в UTC для будущей базы данных
+        "payload": payload_data
+    }
+    
+    with open(file_name, "a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+# =====================================================================
+# ГЛАВНАЯ ЛОГИКА СКРИНЕРА
+# =====================================================================
 async def main():
 	"""
 	Главная асинхронная точка входа в скринер межбиржевого арбитража.
@@ -53,12 +92,17 @@ async def main():
 	
 	print("🔍 [ШАГ 3] Запуск асинхронного цикла скринера...", flush=True)
 	try:
+		# Передаем функцию сохранения логов в менеджер арбитража, чтобы вызывать её внутри
+		# (Если ваш класс ArbitrageManager умеет принимать кастомные функции)
+		# manager.set_logger(save_market_data) 
+		
 		# Запускаем бесконечный цикл опроса стаканов бирж и отправку аларма старта в ТГ
 		await manager.start()
 	except KeyboardInterrupt:
 		print("\n[MAIN] Завершение работы пользователем через сочетание клавиш...", flush=True)
 	except Exception as loop_err:
 		print(f"\n🚨 [MAIN КРИТ ОШИБКА] Непредвиденный сбой в работе ядра: {loop_err}", flush=True)
+		logger.error(f"Критический сбой ядра скринера: {loop_err}", exc_info=True)
 	finally:
 		# Гарантированно отправляем алерт остановки в ТГ и закрываем ClientSession
 		print("\n🔍 [ШАГ 4] Корректное закрытие сетевых коннектов...", flush=True)
