@@ -1,93 +1,48 @@
-import os
-import csv
+# Модуль: database/storage.py
+import psycopg2
 from datetime import datetime
-import logging
-from pathlib import Path
-from typing import Dict, Any
 
-logger = logging.getLogger("ScreenerStorage")
+class DBStorage:
+    def __init__(self, db_settings: dict):
+        self.config = db_settings.get("postgres", {})
+        
+    def _get_connection(self):
+        return psycopg2.connect(
+            dbname=self.config.get("dbname", "crypto_db"),
+            user=self.config.get("user", "postgres"),
+            password=self.config.get("password", ""),
+            host=self.config.get("host", "localhost"),
+            port=self.config.get("port", 5432)
+        )
 
-class SignalStorage:
-	"""
-	Компонент для надежной асинхронной и потоковой записи 
-	арбитражных окон и технических сигналов аномалий на жесткий диск.
-	"""
-	
-	def __init__(self, arbitrage_csv_path: Path, signals_csv_path: Path):
-		"""
-		Инициализация файлового хранилища данных.
-		Пути вычисляются на основе config_bot.json и передаются сюда диспетчером.
-		"""
-		self.arbitrage_file = arbitrage_csv_path
-		self.signals_file = signals_csv_path
-		
-		# Автоматически создаем родительские папки для файлов, если их физически не существовало
-		self.arbitrage_file.parent.mkdir(parents=True, exist_ok=True)
-		self.signals_file.parent.mkdir(parents=True, exist_ok=True)
-		
-		# Запуск процедуры проверки и генерации заголовков таблиц
-		self._init_files()
+    def save_balance(self, ts, balance: float):
+        """Запись лога баланса"""
+        sql = "INSERT INTO balance_logs (timestamp, balance_usdt) VALUES (%s, %s);"
+        conn = self._get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(sql, (ts, balance))
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            print(f"🚨 [DB ERROR] Баланс: {e}")
+        finally:
+            conn.close()
 
-	def _init_files(self):
-		"""Создает CSV файлы со структурами заголовков, если они не существуют."""
-		if not self.arbitrage_file.exists():
-			with open(self.arbitrage_file, mode="w", newline="", encoding="utf-8") as f:
-				writer = csv.writer(f, delimiter=";")
-				writer.writerow([
-					"Timestamp", 
-					"Symbol", 
-					"Buy_Exchange", 
-					"Sell_Exchange", 
-					"Buy_Price", 
-					"Sell_Price", 
-					"Raw_Spread_Pct", 
-					"Net_Profit_USDT"
-				])
-				
-		if not self.signals_file.exists():
-			with open(self.signals_file, mode="w", newline="", encoding="utf-8") as f:
-				writer = csv.writer(f, delimiter=";")
-				writer.writerow([
-					"Timestamp", 
-					"Exchange", 
-					"Symbol", 
-					"Type", 
-					"Price", 
-					"Metric_Value", 
-					"Description"
-				])
-
-	def save_arbitrage(self, data: Dict[str, Any]):
-		"""Записывает строку с параметрами обнаруженного прибыльного межбиржевого окна."""
-		try:
-			with open(self.arbitrage_file, mode="a", newline="", encoding="utf-8") as f:
-				writer = csv.writer(f, delimiter=";")
-				writer.writerow([
-					datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-					data.get("symbol"),
-					data.get("buy_exchange"),
-					data.get("sell_exchange"),
-					data.get("buy_price"),
-					data.get("sell_price"),
-					data.get("raw_spread_pct"),
-					data.get("net_profit_usdt")
-				])
-		except Exception as e:
-			logger.error(f"Не удалось сохранить арбитраж в базу CSV: {e}")
-
-	def save_signal(self, data: Dict[str, Any]):
-		"""Записывает строку с параметрами технического торгового сигнала (памп/дамп/объемы)."""
-		try:
-			with open(self.signals_file, mode="a", newline="", encoding="utf-8") as f:
-				writer = csv.writer(f, delimiter=";")
-				writer.writerow([
-					datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-					data.get("exchange"),
-					data.get("symbol"),
-					data.get("type"),
-					data.get("price"),
-					data.get("metric_value"),
-					data.get("description")
-				])
-		except Exception as e:
-			logger.error(f"Не удалось сохранить технический сигнал в базу CSV: {e}")
+    def save_alert(self, ts, alert_type, symbol, direction, delta, metric, info):
+        """Запись всплеска объема или волатильности"""
+        sql = """
+            INSERT INTO market_alerts 
+            (timestamp, alert_type, symbol, direction, delta_pct, main_metric, volume_info)
+            VALUES (%s, %s, %s, %s, %s, %s, %s);
+        """
+        conn = self._get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(sql, (ts, alert_type, symbol, direction, delta, metric, info))
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            print(f"🚨 [DB ERROR] Алерт: {e}")
+        finally:
+            conn.close()
