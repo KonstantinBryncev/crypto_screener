@@ -1,48 +1,82 @@
 {
-	"exchanges": [
-		"binance",
-		"bybit",
-		"gateio",
-		"kucoin"
-	],
-	"pairs": [
-		"BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "ADAUSDT",
-		"DOTUSDT", "AVAXUSDT", "LINKUSDT", "DOGEUSDT", "MATICUSDT",
-		"UNIUSDT", "LTCUSDT", "ATOMUSDT", "TRXUSDT", "BCHUSDT",
-		"SHIBUSDT", "NEARUSDT", "FTMUSDT", "ALGOUSDT", "FILUSDT",
-		"APEUSDT", "SANDUSDT", "MANAUSDT", "GALAUSDT", "CHZUSDT",
-		"DYDXUSDT", "OPUSDT", "APTUSDT", "ARBUSDT", "SUIUSDT"
-	],
-	"arbitrage_logic": {
-		"min_spread_percent": 0.15,
-		"max_spread_percent": 5.0,
-		"min_volume_usdt": 500.0
-	},
-	"trading_settings": {
-		"base_order_usdt": 500.0,
-		"transfer_fee_usdt": 1.5,
-		"estimated_trade_fee_pct": 0.1,
-		"scan_delay_seconds": 10,
-		"anti_ban_delay_seconds": 1
-	},
-	"network_fees_in_crypto": {
-		"BTC": 0.0005, "ETH": 0.003, "LTC": 0.001, "XRP": 0.2, "SOL": 0.01,
-		"DOGE": 2.0, "DOT": 0.1, "LINK": 0.5, "AVAX": 0.01, "TRX": 10.0,
-		"ADA": 1.0, "APT": 0.01, "ALGO": 0.1, "ATOM": 0.01, "XLM": 0.02,
-		"EOS": 0.1, "BONK": 20000.0, "PEPE": 250000.0, "WIF": 0.2, "SUI": 0.1,
-		"NEAR": 0.05, "FTM": 0.5, "INJ": 0.05, "POL": 1.0, "SEI": 0.5,
-		"HBAR": 1.0, "VET": 20.0, "ICP": 0.05, "OP": 0.5, "ARB": 1.0
-	},
-	"system_settings": {
-		"loop_delay_seconds": 1.0,
-		"snapshot_interval_minutes": 10,
-		"enable_telegram_alerts": true
-	},
 	"postgres": {
 		"dbname": "crypto_db",
 		"user": "postgres",
 		"password": "CryptoDB_2026_Secure",
 		"host": "localhost",
 		"port": 5432
+	},
+
+	"network": {
+		"_comment_xray": "=== НАСТРОЙКИ СКРЫТОГО ТУННЕЛЯ XRAY / VLESS ===",
+		"vless_link": "vless://8df80b42-8811-4ad3-a9c0-3b40f8e23c63@92.118.168.39:2185?authority=&encryption=mlkem768x25519plus.native.0rtt.ybtxiGd0D2J4URw5qfaYQtxQ8apR63e9sljLQxk3yEU&flow=xtls-rprx-vision&fp=chrome&pbk=rGx4PMUKoEDKoeMK_-ZTwfQs1Y-5wXgnQdULndofdg8&security=reality&serviceName=&sid=2b403f2d2b&sni=://sony-europe.com&spx=%2Feeba8408296bc2e&support-x25519mlkem768=true&type=grpc#neuroreality-Kirpich%40Notebook.com",
+		"local_socks_port": 52115,
+		"xray_bin_path": "bin/xray.exe",
+		"config_output_path": "config.json"
+	},
+
+	"hosts": {
+		"_comment_endpoints": "=== БАЗОВЫЕ API ССЫЛКИ ДЛЯ ВСЕХ 5 БИРЖ ===",
+		"bybit_base_url": "https://api.bybit.com",
+		"kucoin_base_url": "https://kucoin.com",
+		"okx_base_url": "https://okx.com",
+		"gate_base_url": "https://gateio.ws",
+		"bingx_base_url": "https://open-api.bingx.com"
+	},
+
+	"exchanges": {
+		"_comment_bybit": "=== КЛЮЧИ ДОСТУПА BYBIT ===",
+		"api_key": "Q0G4R3qk3Tom50K2Nv",
+		"api_secret": "7onsJ8m8M4P0U19oDWdJA9EjMm13HP1UVPMj",
+
+		"_comment_kucoin": "=== КЛЮЧИ ДОСТУПА KUCOIN ===",
+		"kucoin": {
+			"api_key": "ТВОЙ_API_КЛЮЧ_ОТ_KUCOIN",
+			"api_secret": "ТВОЙ_СЕКРЕТ_ОТ_KUCOIN",
+			"passphrase": "ТВОЙ_ПАРОЛЬ_ОТ_API_KUCOIN"
+		},
+
+		"okx": {
+			"_comment_okx": "=== КЛЮЧИ ДОСТУПА OKX ===",
+			"api_key": "ТВОЙ_API_КЛЮЧ_ОТ_OKX",
+			"api_secret": "ТВОЙ_СЕКРЕТ_ОТ_OKX",
+			"passphrase": "ТВОЙ_ПАРОЛЬ_ОТ_API_OKX"
+		},
+
+		"gate": {
+			"_comment_gate": "=== КЛЮЧИ ДОСТУПА GATE.IO ===",
+			"api_key": "ТВОЙ_API_КЛЮЧ_ОТ_GATE",
+			"api_secret": "ТВОЙ_СЕКРЕТ_ОТ_GATE"
+		},
+
+		"bingx": {
+			"_comment_bingx": "=== КЛЮЧИ ДОСТУПА BINGX ===",
+			"api_key": "UpX501f2gDAbBgunUh2Kz9CA6ZVFouzwUzrK1TIGzw0wNkAASVUrVkujUw93Yz7QInloPwNNXKsfPh9r8Q",
+			"api_secret": "y84IAihCPqm4NS4oIqHPFBEUqRtuJavjMrNxUTwZMaY3gt53LzIrgdtO6MmXPh36VVoBjLHvLYYcMu748AQ"
+		}
+	},
+
+	"arbitrage": {
+		"_comment_timings": "=== НАСТРОЙКИ ТАЙМИНГОВ И СКОРОСТИ СКАНИРОВАНИЯ ===",
+		"loop_delay_seconds": 1.0,
+		"scan_delay_seconds": 10.0,
+		"anti_ban_delay_seconds": 1.0,
+		"snapshot_interval_minutes": 10.0,
+
+		"_comment_filters": "=== НАСТРОЙКИ ФИЛЬТРАЦИИ СИГНАЛОВ И ВЫВОДА В КОНСОЛЬ ===",
+		"min_spread_percent": 0.5,
+		"max_spread_percent": 5.0,
+		"min_volume_usdt": 500.0,
+		"enable_telegram_alerts": true,
+
+		"_comment_economy": "=== НАСТРОЙКИ ЭКОНОМИКИ И ТЕСТОВОГО БАЛАНСА ===",
+		"base_order_usdt": 500.0,
+		"symbols": ["BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT", "ADA/USDT"]
+	},
+
+	"telegram": {
+		"bot_token": "ТВОЙ_ТОКЕН_БОТА",
+		"chat_id": "ТВОЙ_ЧАТ_ИД"
 	}
 }
+

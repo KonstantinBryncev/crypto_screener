@@ -1,10 +1,62 @@
 import os
-import csv
 import json
+import psycopg2
 from database.storage import DBStorage
 
+# Новая структура базы данных под межбиржевой арбитраж и сбор статистики
+INIT_DB_SQL = """
+DROP TABLE IF EXISTS possible_trades CASCADE;
+DROP TABLE IF EXISTS virtual_balances CASCADE;
+DROP TABLE IF EXISTS crypto_commissions CASCADE;
+DROP TABLE IF EXISTS virtual_orders CASCADE;
+
+-- 1. Таблица для сбора статистики и поиска ТОП-10 самых активных пар
+CREATE TABLE possible_trades (
+    id SERIAL PRIMARY KEY,
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    symbol TEXT,
+    buy_exchange TEXT,
+    sell_exchange TEXT,
+    buy_price NUMERIC,
+    sell_price NUMERIC,
+    spread_pct NUMERIC,
+    volume_24h NUMERIC
+);
+
+-- 2. Виртуальные балансы на биржах для будущих тестов экономики
+CREATE TABLE virtual_balances (
+    id SERIAL PRIMARY KEY,
+    exchange_name TEXT,
+    asset TEXT,
+    balance_total NUMERIC DEFAULT 0.0,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 3. Справочник торговых и сетевых комиссий (для второго бота-бухгалтера)
+CREATE TABLE crypto_commissions (
+    id SERIAL PRIMARY KEY,
+    exchange_name TEXT,
+    symbol TEXT,
+    trade_fee_pct NUMERIC DEFAULT 0.1,
+    network_fee TEXT
+);
+
+-- 4. История совершенных симуляционных сделок
+CREATE TABLE virtual_orders (
+    id SERIAL PRIMARY KEY,
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    symbol TEXT,
+    buy_exchange TEXT,
+    sell_exchange TEXT,
+    amount NUMERIC,
+    buy_price NUMERIC,
+    sell_price NUMERIC,
+    net_profit_usdt NUMERIC
+);
+"""
 
 def load_config():
+    """Загрузка конфигурационного файла бота для получения параметров СУБД"""
     base_dir = os.path.dirname(os.path.abspath(__file__))
     config_path = os.path.join(base_dir, "config", "config_bot.json")
     if os.path.exists(config_path):
@@ -12,93 +64,32 @@ def load_config():
             return json.load(f)
     return {}
 
-
-INIT_DB_SQL = """
-DROP TABLE IF EXISTS market_alerts CASCADE;
-
-CREATE TABLE market_alerts (
-    id SERIAL PRIMARY KEY,
-    timestamp TIMESTAMP,
-    alert_type TEXT,
-    symbol TEXT,
-    direction TEXT,
-    delta_pct NUMERIC,
-    main_metric TEXT,
-    volume_info TEXT,
-    info TEXT
-);
-
-CREATE TABLE IF NOT EXISTS asset_prices_history (
-    id SERIAL PRIMARY KEY,
-    timestamp TIMESTAMP,
-    symbol TEXT,
-    price NUMERIC
-);
-
-CREATE TABLE IF NOT EXISTS trade_signals (
-    id SERIAL PRIMARY KEY,
-    timestamp TIMESTAMP,
-    symbol TEXT,
-    signal_type TEXT,
-    price NUMERIC,
-    info TEXT
-);
-"""
-
-
-
-
-
 def migrate():
-    print("🚀 [ШАГ 1] Подключение к PostgreSQL и создание структуры таблиц...")
+    """Основная функция для пересоздания структуры таблиц в PostgreSQL"""
+    print("🚀 [ШАГ 1] Подключение к PostgreSQL...")
     config = load_config()
-    
-    # Жёстко зашиваем пароль для мигратора, чтобы не зависеть от JSON-файла сервера
-    if "postgres" not in config:
-        config["postgres"] = {}
-    config["postgres"]["password"] = "CryptoDB_2026_Secure"
-    config["postgres"]["dbname"] = "crypto_db"
-    config["postgres"]["user"] = "postgres"
-    config["postgres"]["host"] = "localhost"
-    config["postgres"]["port"] = 5432
-    
     storage = DBStorage(config)
     
-    # Автоматически создаем таблицы в базе данных (Аналог Django migrate)
-    conn = storage._get_connection()
+    try:
+        conn = storage._get_connection()
+    except Exception as conn_err:
+        print(f"🚨 ОШИБКА ПОДКЛЮЧЕНИЯ К СУБД: {conn_err}")
+        print("Убедись, что параметры в config_bot.json верны.")
+        return
+
+    print("🛠️ [ШАГ 2] Сброс старых таблиц и создание новой структуры...")
     try:
         with conn.cursor() as cur:
             cur.execute(INIT_DB_SQL)
         conn.commit()
-        print("✅ [УСПЕХ] Все таблицы (market_alerts, asset_prices_history, trade_signals) успешно созданы!")
+        print("✅ [УСПЕХ] Новая структура базы успешно развернута!")
+        print("Таблица possible_trades полностью готова к накоплению статистики.")
     except Exception as e:
         conn.rollback()
-        print(f"🚨 [ОШИБКА] Не удалось создать структуру БД: {e}")
-        return
+        print(f"🚨 [ОШИБКА] Не удалось выполнить SQL-скрипт структуры: {e}")
     finally:
-        conn.close()
-        
-    # [ШАГ 2] Перенос старых аномалий из CSV
-    signals_file = os.path.join("database", "signals_history.csv")
-    if os.path.exists(signals_file):
-        print(f"📦 [ШАГ 2] Чтение истории аномалий из {signals_file}...")
-        with open(signals_file, "r", encoding="utf-8") as f:
-            reader = csv.DictReader(f, delimiter=';')
-            count = 0
-            for row in reader:
-                storage.save_alert(
-                    ts=row.get("Timestamp"),
-                    alert_type=row.get("Type"),
-                    symbol=row.get("Symbol"),
-                    direction=row.get("Direction"),
-                    delta=float(row.get("Delta_Pct", 0)),
-                    metric=row.get("Main_Metric", ""),
-                    info=row.get("Volume_Info", "")
-                )
-                count += 1
-        print(f"🎉 [МИГРАЦИЯ ЗАВЕРШЕНА] Успешно перенесено строк в базу: {count}")
-    else:
-        print("ℹ️ Старый файл истории сигналов не найден, создана пустая база данных.")
+        if 'conn' in locals() and conn:
+            conn.close()
 
 if __name__ == "__main__":
     migrate()

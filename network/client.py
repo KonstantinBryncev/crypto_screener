@@ -10,14 +10,16 @@ import socket
 from typing import Optional, Any, List
 from urllib.parse import unquote, urlparse, parse_qs
 
-# ВОТ ЭТА СТРОКА ДОЛЖНА БЫТЬ В САМОМ ВЕРХУ ФАЙЛА ДЛЯ РАБОТЫ fetch_json:
+# Импорт библиотеки маскировки для Reality-туннелей
 from curl_cffi.requests import AsyncSession  
+
+logger = logging.getLogger("AsyncHttpClient")
 
 class AsyncHttpClient:
 	"""
 	Оптимизированный HTTP-клиент (Singleton).
 	Интегрирует ядро Xray, динамически подбирает порты и полностью
-	маскирует запросы к Gate.io под реальный Chrome для обхода Cloudflare.
+	маскирует запросы к Gate.io, OKX и KuCoin под Chrome через Reality-туннель.
 	"""
 	_instance = None
 
@@ -29,12 +31,10 @@ class AsyncHttpClient:
 			cls._instance.local_port = None
 			cls._instance.internal_proxy_url = None
 			
-			# Извлекаем путь к единому конфигу бота
 			current_dir = os.path.dirname(os.path.abspath(__file__))
 			project_root = os.path.dirname(current_dir)
 			cls._instance.config_path = os.path.join(project_root, "config", "config_bot.json")
 			
-			# Запускаем встроенный безопасный VPN-модуль
 			cls._instance._start_integrated_xray_vpn()
 		return cls._instance
 
@@ -69,15 +69,12 @@ class AsyncHttpClient:
 			xray_bin = os.path.normpath(os.path.join(project_root, net_settings.get("xray_bin_path", "bin/xray.exe")))
 			config_output = os.path.join(project_root, net_settings.get("config_output_path", "config.json"))
 
-			# Автоподбор порта
 			self.local_port = self._find_free_port()
 			
-			# Парсинг ссылки
 			parsed = urlparse(vless_link)
 			query_params = parse_qs(parsed.query)
 			cleaned_params = {k: v[0] for k, v in query_params.items() if v}
 
-			# Сборка структуры конфигурации Xray с DoH
 			outbound_tag = "proxy"
 			stream_settings = {
 				"network": cleaned_params.get("type", "tcp"),
@@ -124,7 +121,6 @@ class AsyncHttpClient:
 				print(f"❌ [СЕТЬ] Исполняемый файл ядра Xray отсутствует: {xray_bin}")
 				return
 
-			# Запуск фонового процесса
 			self.xray_process = subprocess.Popen(
 				[xray_bin, "run", "-c", config_output],
 				stdout=subprocess.DEVNULL,
@@ -138,7 +134,7 @@ class AsyncHttpClient:
 			print(f"🚨 [СЕТЬ] Ошибка автозапуска ядра Xray: {e}")
 
 	async def get_session(self) -> aiohttp.ClientSession:
-		"""Легкая общая асинхронная сессия для Bybit/BingX/OKX"""
+		"""Легкая общая асинхронная сессия для Bybit/BingX"""
 		if self.session is None or self.session.closed:
 			timeout = aiohttp.ClientTimeout(total=10, connect=4)
 			headers = {
@@ -167,8 +163,6 @@ class AsyncHttpClient:
 		data: Optional[Any] = None
 	) -> Optional[dict]:
 		"""Центральный диспетчер запросов бота"""
-		
-		# Формируем чистые HTTP заголовки
 		request_headers = {
 			"Accept": "application/json",
 			"Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8"
@@ -178,11 +172,11 @@ class AsyncHttpClient:
 				request_headers[str(k)] = str(v)
 
 		# =========================================================================
-		# ТОЧЕЧНЫЙ ПЕРЕХВАТ GATE.IO И TELEGRAM (ПРОБИВАЕМ КЛАУДФЛЕЕР И БЛОКИРОВКИ)
+		# ТОЧЕЧНЫЙ ПЕРЕХВАТ ПЛАТФОРМ (ПРОБИВАЕМ РКН И КЛАУДФЛЕЕР ЧЕРЕЗ REALITY)
 		# =========================================================================
-		if "gateio" in url or "gate.io" in url or "api.telegram.org" in url:
+		target_domains = ["gateio", "gate.io", "okx", "kucoin", "telegram.org"]
+		if any(domain in url for domain in target_domains):
 			try:
-				# Запускаем сессию curl_cffi с жесткой эмуляцией оригинального браузера Chrome
 				async with AsyncSession(impersonate="chrome120") as crypto_session:
 					response = await crypto_session.request(
 						method=method,
@@ -190,20 +184,19 @@ class AsyncHttpClient:
 						params=params,
 						headers=request_headers,
 						data=data,
-						proxy=self.internal_proxy_url, # Пускаем запрос через наш зашифрованный туннель
+						proxy=self.internal_proxy_url,  # Наш зашифрованный туннель
 						timeout=8
 					)
 					
 					if response.status_code != 200:
-						logger.warning(f"⚠️ [БЛОКИРОВКА] Шлюз вернул статус {response.status_code} для {url}")
 						return None
 					return response.json()
 			except Exception as e:
-				logger.error(f"🚨 [КЛАУДФЛЕЕР] Сбой пробития защиты на {url}: {e}")
+				logger.error(f"🚨 [ТУННЕЛЬ REALITY] Сбой запроса на {url}: {e}")
 				return None
 
 		# =========================================================================
-		# СТАНДАРТНЫЙ ПУТЬ ДЛЯ ОСТАЛЬНЫХ БИРЖ (BYBIT, OKX, BINGX)
+		# СТАНДАРТНЫЙ ПУТЬ ДЛЯ ОСТАЛЬНЫХ БИРЖ (BYBIT, BINGX)
 		# =========================================================================
 		session = await self.get_session()
 		try:
@@ -223,7 +216,7 @@ class AsyncHttpClient:
 			return None
 
 	async def close(self):
-		"""Безопасная остановка сессий и автоматическая выгрузка xray.exe из памяти ОС"""
+		"""Безопасная остановка сессий и выгрузка xray.exe из памяти ОС"""
 		if self.session and not self.session.closed:
 			await self.session.close()
 		if self.xray_process:

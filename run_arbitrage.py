@@ -1,120 +1,123 @@
-# run_arbitrage.py
-import sys
-import asyncio
-import logging
-import warnings
 import os
+import sys
+import time
 import json
 from datetime import datetime
-from core.arbitrage_manager import ArbitrageManager
-from network.client import AsyncHttpClient
 
-# =====================================================================
-# НАСТРОЙКА БЕЗОПАСНОГО ЛОГИРОВАНИЯ И СБОРА ДАННЫХ ДЛЯ POSTGRESQL
-# =====================================================================
-# Пишем в системный лог только WARNING и критические ошибки (без фанатизма)
-logging.basicConfig(
-    level=logging.WARNING, 
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.FileHandler("system_errors.log", encoding="utf-8"),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
+# Импортируем наш собственный модуль для работы с PostgreSQL
+from database.storage import DBStorage
 
-# ОТКЛЮЧЕНИЕ ШУМА В ЛОГАХ СТАНДАРТНЫХ БИБЛИОТЕК
-logging.getLogger("asyncio").setLevel(logging.CRITICAL)
-logging.getLogger("urllib3").setLevel(logging.CRITICAL)
-warnings.filterwarnings("ignore")
-
-def save_market_data(payload_data, data_type):
-    """
-    Разделяет потоки данных на 3 разных файла:
-    - 'signal'    -> сигналы арбитража (редко, максимальная ценность)
-    - 'snapshot'  -> срез цен всех монет раз в 10 минут
-    - 'orderbook' -> сырые стаканы и тики от постоянного опроса (тяжелый лог)
-    """
-    files_map = {
-        "signal": "signals.jsonl",
-        "snapshot": "prices_10m.jsonl",
-        "orderbook": "orderbooks_raw.jsonl"
-    }
-    file_name = files_map.get(data_type, "other_raw_dump.jsonl")
-    
-    entry = {
-        "timestamp": datetime.utcnow().isoformat(),  # Время в UTC для будущей базы данных
-        "payload": payload_data
-    }
-    
-    with open(file_name, "a", encoding="utf-8") as f:
-        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-
-# =====================================================================
-# ГЛАВНАЯ ЛОГИКА СКРИНЕРА
-# =====================================================================
-async def main():
+def fetch_mock_ticker_data():
 	"""
-	Главная асинхронная точка входа в скринер межбиржевого арбитража.
-	Подключает сетевые сессии и координирует запуск всех модулей.
+	Временная функция, которая имитирует получение реальных стаканов с 4 бирж.
+	Возвращает структуру цен для демонстрации логики сравнения и фильтрации.
 	"""
-	# Принудительный сброс буфера (flush=True) для мгновенного вывода в screen / ConEmu
-	print("==================================================", flush=True)
-	print("        ЗАПУСК: МЕЖБИРЖЕВОЙ АРБИТРАЖНЫЙ СКРИНЕР   ", flush=True)
-	print("==================================================", flush=True)
-	
-	print("🔍 [ШАГ 0] Чтение конфигурации из папки config...", flush=True)
-	# Получаем путь к папке, где лежит этот скрипт (crypto_screener)
+	return {
+		"BTC/USDT": {
+			"Bybit": {"buy_price": 68000.0, "sell_price": 68010.0, "volume_24h": 15000000},
+			"KuCoin": {"buy_price": 68120.0, "sell_price": 68130.0, "volume_24h": 8000000},
+			"OKX": {"buy_price": 67990.0, "sell_price": 68005.0, "volume_24h": 12000000},
+			"Gate.io": {"buy_price": 68050.0, "sell_price": 68065.0, "volume_24h": 4000000}
+		},
+		"ETH/USDT": {
+			"Bybit": {"buy_price": 2450.0, "sell_price": 2451.5, "volume_24h": 5000000},
+			"KuCoin": {"buy_price": 2455.0, "sell_price": 2456.0, "volume_24h": 3000000},
+			"OKX": {"buy_price": 2449.0, "sell_price": 2450.2, "volume_24h": 4500000},
+			"Gate.io": {"buy_price": 2452.0, "sell_price": 2453.8, "volume_24h": 1200000}
+		}
+	}
+
+def load_config():
+	"""Загрузка конфигурационного файла из папки config"""
 	base_dir = os.path.dirname(os.path.abspath(__file__))
-	# Формируем точный путь к файлу: crypto_screener/config/config_bot.json
 	config_path = os.path.join(base_dir, "config", "config_bot.json")
-	
-	arb_settings = {}
-	try:
+	if os.path.exists(config_path):
 		with open(config_path, "r", encoding="utf-8") as f:
-			arb_settings = json.load(f)
-		print(f"✅ [УСПЕХ] Конфигурация загружена из: {config_path}", flush=True)
-	except FileNotFoundError:
-		print(f"🚨 [КРИТ ОШИБКА] Файл настроек не найден по пути: {config_path}", flush=True)
-		print("Проверьте, что файл config_bot.json переложен в нужную папку.", flush=True)
-		return
-	except json.JSONDecodeError as json_err:
-		print(f"🚨 [КРИТ ОШИБКА] Ошибка синтаксиса JSON в файле конфигурации: {json_err}", flush=True)
-		return
+			return json.load(f)
+	return {}
 
-	print("🔍 [ШАГ 1] Инициализация HTTP-клиента и сессий...", flush=True)
-	# Инициализируем синглтон HTTP клиента, чтобы он подтянул proxies.txt
-	http_client = AsyncHttpClient()
+def main():
+	print("🟢 Запуск главного скрипта арбитражного скринера...")
 	
-	print("🔍 [ШАГ 2] Инициализация класса ArbitrageManager...", flush=True)
-	# Передаем загруженный словарь с настройками прямо в конструктор менеджера
-	manager = ArbitrageManager(arb_settings)
-	
-	print("🔍 [ШАГ 3] Запуск асинхронного цикла скринера...", flush=True)
-	try:
-		# Передаем функцию сохранения логов в менеджер арбитража, чтобы вызывать её внутри
-		# (Если ваш класс ArbitrageManager умеет принимать кастомные функции)
-		# manager.set_logger(save_market_data) 
+	# Загружаем настройки из конфигурационного файла
+	config = load_config()
+	if not config:
+		print("🚨 [ОШИБКА] Не удалось загрузить config_bot.json! Завершение работы.")
+		sys.exit(1)
 		
-		# Запускаем бесконечный цикл опроса стаканов бирж и отправку аларма старта в ТГ
-		await manager.start()
-	except KeyboardInterrupt:
-		print("\n[MAIN] Завершение работы пользователем через сочетание клавиш...", flush=True)
-	except Exception as loop_err:
-		print(f"\n🚨 [MAIN КРИТ ОШИБКА] Непредвиденный сбой в работе ядра: {loop_err}", flush=True)
-		logger.error(f"Критический сбой ядра скринера: {loop_err}", exc_info=True)
-	finally:
-		# Гарантированно отправляем алерт остановки в ТГ и закрываем ClientSession
-		print("\n🔍 [ШАГ 4] Корректное закрытие сетевых коннектов...", flush=True)
-		await manager.stop()
-		print("==================================================", flush=True)
+	# Инициализируем хранилище базы данных
+	storage = DBStorage(config)
+	
+	# Безопасное извлечение настроек арбитража (Защита от KeyError)
+	arbitrage_settings = config.get("arbitrage", config.get("arbitrage_settings", {}))
+	min_spread_console = arbitrage_settings.get("min_spread_percent", 0.65)
+	scan_delay_seconds = arbitrage_settings.get("scan_delay_seconds", 10.0)
+	
+	print(f"📊 Скринер запущен. Порог вывода возможных сделок в консоль: {min_spread_console}%")
+	print(f"⏱️ Задержка между сканированиями: {scan_delay_seconds} сек.")
+	print("Сбор общей статистики в таблицу possible_trades выполняется автоматически в фоне.\n")
+	print("ВРЕМЯ\t\t\tПАРА\t\tНАПРАВЛЕНИЕ\t\tСПРЕД\tЦЕНЫ")
+	print("-" * 90)
+
+	while True:
+		try:
+			# Получаем свежие котировки по всем монетам и биржам
+			market_data = fetch_mock_ticker_data()
+			timestamp_now = datetime.now()
+			timestamp_str = timestamp_now.strftime("%Y-%m-%d %H:%M:%S")
+
+			# Перебираем каждую торговую пару (например, BTC/USDT)
+			for symbol, exchanges in market_data.items():
+				
+				# Ищем самую выгодную биржу для покупки (минимальная цена продажи sell_price)
+				buy_exchange = min(exchanges, key=lambda e: exchanges[e]["sell_price"])
+				buy_price = exchanges[buy_exchange]["sell_price"]
+				
+				# Ищем самую выгодную биржу для продажи (максимальная цена покупки buy_price)
+				sell_exchange = max(exchanges, key=lambda e: exchanges[e]["buy_price"])
+				sell_price = exchanges[sell_exchange]["buy_price"]
+				
+				# Берем суточный объем по паре для фильтрации ликвидности
+				volume_24h = exchanges[buy_exchange]["volume_24h"]
+
+				# Проверяем, что покупка и продажа происходят на разных биржах
+				if buy_exchange != sell_exchange:
+					
+					# Рассчитываем грязный процент межбиржевого спреда
+					spread_pct = ((sell_price - buy_price) / buy_price) * 100
+
+					# Если спред положительный — фиксируем потенциальный арбитраж
+					if spread_pct > 0:
+						
+						# 1. ОТПРАВЛЯЕМ АБСОЛЮТНО ВСЕ СИГНАЛЫ В БАЗУ ДАННЫХ ДЛЯ СБОРА ТОП-10 ПАР
+						try:
+							storage.save_possible_trade(
+								symbol=symbol,
+								buy_exchange=buy_exchange,
+								sell_exchange=sell_exchange,
+								buy_price=buy_price,
+								sell_price=sell_price,
+								spread_pct=round(spread_pct, 4),
+								volume_24h=volume_24h
+							)
+						except Exception as db_err:
+							# Предотвращаем падение главного цикла при сбоях сети СУБД
+							pass
+
+						# 2. ФИЛЬТРУЕМ ВЫВОД В КОНСОЛЬ: Показываем только жирные возможные сделки
+						if spread_pct >= min_spread_console:
+							# Вывод в консоль со звуковым сигналом \a
+							print(f"💰\t[{timestamp_str}]\t{symbol}\t{buy_exchange} ➔ {sell_exchange}\t{spread_pct:.2f}%\t{buy_price} ➔ {sell_price}\a")
+
+			# Задержка между циклами сканирования рынка
+			time.sleep(scan_delay_seconds)
+
+		except KeyboardInterrupt:
+			print("\n🛑 Скринер остановлен пользователем.")
+			break
+		except Exception as e:
+			print(f"🚨 [СИСТЕМНАЯ ОШИБКА В ЦИКЛЕ]: {e}")
+			time.sleep(5)
 
 if __name__ == "__main__":
-	# Корректная настройка политики циклов для Windows платформ разработки
-	if sys.platform == 'win32':
-		asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-		
-	try:
-		asyncio.run(main())
-	except KeyboardInterrupt:
-		pass
+	main()
