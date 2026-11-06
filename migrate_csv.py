@@ -14,7 +14,9 @@ def load_config():
 
 
 INIT_DB_SQL = """
-CREATE TABLE IF NOT EXISTS market_alerts (
+DROP TABLE IF EXISTS market_alerts CASCADE;
+
+CREATE TABLE market_alerts (
     id SERIAL PRIMARY KEY,
     timestamp TIMESTAMP,
     alert_type VARCHAR(50),
@@ -22,6 +24,7 @@ CREATE TABLE IF NOT EXISTS market_alerts (
     direction VARCHAR(10),
     delta_pct NUMERIC,
     main_metric VARCHAR(50),
+    volume_info TEXT,
     info TEXT
 );
 
@@ -41,6 +44,7 @@ CREATE TABLE IF NOT EXISTS trade_signals (
     info TEXT
 );
 """
+
 
 
 
