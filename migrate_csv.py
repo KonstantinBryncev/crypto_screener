@@ -19,11 +19,11 @@ DROP TABLE IF EXISTS market_alerts CASCADE;
 CREATE TABLE market_alerts (
     id SERIAL PRIMARY KEY,
     timestamp TIMESTAMP,
-    alert_type VARCHAR(50),
-    symbol VARCHAR(20),
-    direction VARCHAR(10),
+    alert_type TEXT,
+    symbol TEXT,
+    direction TEXT,
     delta_pct NUMERIC,
-    main_metric VARCHAR(50),
+    main_metric TEXT,
     volume_info TEXT,
     info TEXT
 );
@@ -31,19 +31,20 @@ CREATE TABLE market_alerts (
 CREATE TABLE IF NOT EXISTS asset_prices_history (
     id SERIAL PRIMARY KEY,
     timestamp TIMESTAMP,
-    symbol VARCHAR(20),
+    symbol TEXT,
     price NUMERIC
 );
 
 CREATE TABLE IF NOT EXISTS trade_signals (
     id SERIAL PRIMARY KEY,
     timestamp TIMESTAMP,
-    symbol VARCHAR(20),
-    signal_type VARCHAR(20),
+    symbol TEXT,
+    signal_type TEXT,
     price NUMERIC,
     info TEXT
 );
 """
+
 
 
 
