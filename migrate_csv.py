@@ -1,3 +1,16 @@
+import os
+import csv
+import json
+
+def load_config():
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    config_path = os.path.join(base_dir, "config", "config_bot.json")
+    if os.path.exists(config_path):
+        with open(config_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
+
 def migrate():
     print("🚀 [ШАГ 1] Подключение к PostgreSQL и создание структуры таблиц...")
     config = load_config()
