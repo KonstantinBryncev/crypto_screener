@@ -1,6 +1,8 @@
 import os
 import csv
 import json
+from database.storage import DBStorage
+
 
 def load_config():
     base_dir = os.path.dirname(os.path.abspath(__file__))
