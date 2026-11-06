@@ -13,6 +13,37 @@ def load_config():
     return {}
 
 
+INIT_DB_SQL = """
+CREATE TABLE IF NOT EXISTS market_alerts (
+    id SERIAL PRIMARY KEY,
+    timestamp TIMESTAMP,
+    alert_type VARCHAR(50),
+    symbol VARCHAR(20),
+    direction VARCHAR(10),
+    delta_pct NUMERIC,
+    metric_value VARCHAR(50),
+    info TEXT
+);
+
+CREATE TABLE IF NOT EXISTS asset_prices_history (
+    id SERIAL PRIMARY KEY,
+    timestamp TIMESTAMP,
+    symbol VARCHAR(20),
+    price NUMERIC
+);
+
+CREATE TABLE IF NOT EXISTS trade_signals (
+    id SERIAL PRIMARY KEY,
+    timestamp TIMESTAMP,
+    symbol VARCHAR(20),
+    signal_type VARCHAR(20),
+    price NUMERIC,
+    info TEXT
+);
+"""
+
+
+
 def migrate():
     print("🚀 [ШАГ 1] Подключение к PostgreSQL и создание структуры таблиц...")
     config = load_config()
