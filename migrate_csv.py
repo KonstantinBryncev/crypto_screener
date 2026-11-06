@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS market_alerts (
     symbol VARCHAR(20),
     direction VARCHAR(10),
     delta_pct NUMERIC,
-    metric_value VARCHAR(50),
+    main_metric VARCHAR(50),
     info TEXT
 );
 
