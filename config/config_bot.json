@@ -18,9 +18,9 @@
 	"hosts": {
 		"_comment_endpoints": "=== БАЗОВЫЕ API ССЫЛКИ ДЛЯ ВСЕХ 5 БИРЖ ===",
 		"bybit_base_url": "https://api.bybit.com",
-		"kucoin_base_url": "https://kucoin.com",
-		"okx_base_url": "https://okx.com",
-		"gate_base_url": "https://gateio.ws",
+		"kucoin_base_url": "https://api.kucoin.com",
+		"okx_base_url": "https://openapi.okx.com",
+		"gate_base_url": "https://api.gateio.ws/api/v4",
 		"bingx_base_url": "https://open-api.bingx.com"
 	},
 
@@ -31,22 +31,22 @@
 
 		"_comment_kucoin": "=== КЛЮЧИ ДОСТУПА KUCOIN ===",
 		"kucoin": {
-			"api_key": "ТВОЙ_API_КЛЮЧ_ОТ_KUCOIN",
-			"api_secret": "ТВОЙ_СЕКРЕТ_ОТ_KUCOIN",
-			"passphrase": "ТВОЙ_ПАРОЛЬ_ОТ_API_KUCOIN"
+			"api_key": "6aee89ba1f708e0001e2d5f9",
+			"api_secret": "25cfb91b-0a63-4171-8f27-cfc9df0e7a36",
+			"passphrase": "92922700"
 		},
 
 		"okx": {
 			"_comment_okx": "=== КЛЮЧИ ДОСТУПА OKX ===",
-			"api_key": "ТВОЙ_API_КЛЮЧ_ОТ_OKX",
-			"api_secret": "ТВОЙ_СЕКРЕТ_ОТ_OKX",
-			"passphrase": "ТВОЙ_ПАРОЛЬ_ОТ_API_OKX"
+			"api_key": "c64fcb27-a449-49b5-8678-49074b222c20",
+			"api_secret": "2C958835148D800F78D84ECF4DF35B85",
+			"passphrase": "929227007Asdec#@!"
 		},
 
 		"gate": {
 			"_comment_gate": "=== КЛЮЧИ ДОСТУПА GATE.IO ===",
-			"api_key": "ТВОЙ_API_КЛЮЧ_ОТ_GATE",
-			"api_secret": "ТВОЙ_СЕКРЕТ_ОТ_GATE"
+			"api_key": "1e24662ce0f059e4315f5765c118c728",
+			"api_secret": "6c2e639164e092d2f88e45bb4a9d95514e04ad30b84041591b38cb8dc39c4b57"
 		},
 
 		"bingx": {
