@@ -37,12 +37,16 @@ class AsyncMarketScanner:
 			print(f"🚨 [КРИТИЧЕСКАЯ ОШИБКА КОНФИГА]: В config_bot.json в блоке 'hosts' отсутствует ключ: {e}")
 			sys.exit(1)
 		
-		# Чтение настроек арбитража
+		# Чтение настроек арбитража строго по твоим ключам из файла
 		arbitrage_settings = config.get("arbitrage", {})
-		self.min_spread = arbitrage_settings.get("min_spread_percent", 0.65)
-		self.scan_delay = arbitrage_settings.get("scan_delay_seconds", 3.0)
-		self.base_volume = arbitrage_settings.get("base_volume_usdt", 100.0)
-		self.trade_fee = arbitrage_settings.get("trade_fee_pct", 0.1)
+		self.min_spread = arbitrage_settings.get("min_spread_percent", 0.5)
+		self.max_spread = arbitrage_settings.get("max_spread_percent", 5.0)
+		self.scan_delay = arbitrage_settings.get("scan_delay_seconds", 10.0)
+		self.base_volume = arbitrage_settings.get("base_order_usdt", 500.0)
+		
+		# ЧИТАЕМ МИНИМАЛЬНЫЙ СУТОЧНЫЙ ОБЪЕМ ИЗ ТВОЕГО КОНФИГА JSON
+		self.min_pair_volume_24h = arbitrage_settings.get("min_volume_usdt", 500.0)
+		self.trade_fee = 0.1  # Процент стандартной комиссии спота
 		
 		# Инициализация ядра анализатора
 		self.analyzer = ArbitrageAnalyzer()
@@ -69,10 +73,7 @@ class AsyncMarketScanner:
 		
 		for exchange, endpoint in exchanges_endpoints.items():
 			try:
-				# Собираем полный URL динамически из конфига
 				base_url = self.hosts[exchange].rstrip("/")
-				
-				# Корректируем эндпоинт gate.io, если в конфиге не указана версия api
 				if exchange == "gate.io" and not base_url.endswith("v4"):
 					url = f"{base_url}/api/v4{endpoint}"
 				else:
@@ -123,7 +124,6 @@ class AsyncMarketScanner:
 				print(f"⚠️ Не удалось загрузить пары с {exchange}: {e}")
 
 		if all_sets:
-			# Пересечение: оставляем только монеты, торгующиеся минимум на двух биржах из пяти
 			all_discovered = set.union(*all_sets)
 			valid_pairs = []
 			for pair in all_discovered:
@@ -147,56 +147,78 @@ class AsyncMarketScanner:
 		return symbol
 
 	async def fetch_orderbook(self, exchange: str, symbol: str) -> dict:
-		"""Асинхронное получение стакана с биржи через динамические хосты из конфигурации"""
+		"""Асинхронное получение стакана и суточного объема торгов в USDT с биржи"""
 		formatted_symbol = self._format_symbol(symbol, exchange)
 		base_url = self.hosts[exchange].rstrip("/")
 		
-		# Формируем относительные эндпоинты под стаканы
+		endpoints = {}
 		if exchange == "bybit":
-			url = f"{base_url}/v5/market/orderbook?category=spot&symbol={formatted_symbol}&limit=5"
+			endpoints["ob"] = f"{base_url}/v5/market/orderbook?category=spot&symbol={formatted_symbol}&limit=5"
+			endpoints["ticker"] = f"{base_url}/v5/market/tickers?category=spot&symbol={formatted_symbol}"
 		elif exchange == "okx":
-			url = f"{base_url}/api/v5/market/books?instId={formatted_symbol}&sz=5"
+			endpoints["ob"] = f"{base_url}/api/v5/market/books?instId={formatted_symbol}&sz=5"
+			endpoints["ticker"] = f"{base_url}/api/v5/market/ticker?instId={formatted_symbol}"
 		elif exchange == "bingx":
-			url = f"{base_url}/openApi/spot/v1/market/depth?symbol={formatted_symbol}&limit=5"
+			endpoints["ob"] = f"{base_url}/openApi/spot/v1/market/depth?symbol={formatted_symbol}&limit=5"
+			endpoints["ticker"] = f"{base_url}/openApi/spot/v1/market/ticker?symbol={formatted_symbol}"
 		elif exchange == "gate.io":
-			if not base_url.endswith("v4"):
-				url = f"{base_url}/api/v4/crypto/order_book?currency_pair={formatted_symbol}&limit=5"
-			else:
-				url = f"{base_url}/crypto/order_book?currency_pair={formatted_symbol}&limit=5"
+			api_prefix = "" if base_url.endswith("v4") else "/api/v4"
+			endpoints["ob"] = f"{base_url}{api_prefix}/crypto/order_book?currency_pair={formatted_symbol}&limit=5"
+			endpoints["ticker"] = f"{base_url}{api_prefix}/crypto/tickers?currency_pair={formatted_symbol}"
 		elif exchange == "kucoin":
-			url = f"{base_url}/api/v1/market/orderbook/level2_depth20?symbol={formatted_symbol}"
-		else:
-			return {}
+			endpoints["ob"] = f"{base_url}/api/v1/market/orderbook/level2_depth20?symbol={formatted_symbol}"
+			endpoints["ticker"] = f"{base_url}/api/v1/market/stats?symbol={formatted_symbol}"
 
 		try:
-			response = await self.session.get(url, impersonate="chrome", timeout=2.5)
-			if response.status_code != 200:
-				return {}
+			req_ob = self.session.get(endpoints["ob"], impersonate="chrome", timeout=2.5)
+			req_ticker = self.session.get(endpoints["ticker"], impersonate="chrome", timeout=2.5)
+			res_ob, res_ticker = await asyncio.gather(req_ob, req_ticker)
 			
-			data = response.json()
+			if res_ob.status_code != 200:
+				return {}
+				
+			data = res_ob.json()
+			ticker_data = res_ticker.json() if res_ticker.status_code == 200 else {}
+			
 			asks, bids = [], []
+			volume_24h = 0.0
 
 			if exchange == "bybit":
 				result = data.get("result", {})
 				asks = [[float(x[0]), float(x[1])] for x in result.get("a", [])]
 				bids = [[float(x[0]), float(x[1])] for x in result.get("b", [])]
+				t_list = ticker_data.get("result", {}).get("list", [{}])
+				if t_list:
+					volume_24h = float(t_list[0].get("turnover", 0.0))
+				
 			elif exchange == "okx":
 				result = data.get("data", [{}])
 				asks = [[float(x[0]), float(x[1])] for x in result.get("asks", [])]
 				bids = [[float(x[0]), float(x[1])] for x in result.get("bids", [])]
+				t_data = ticker_data.get("data", [{}])
+				if t_data:
+					volume_24h = float(t_data[0].get("volCcy24h", 0.0))
+				
 			elif exchange == "bingx":
 				result = data.get("data", {})
 				asks = [[float(x[0]), float(x[1])] for x in result.get("asks", [])]
 				bids = [[float(x[0]), float(x[1])] for x in result.get("bids", [])]
+				t_data = ticker_data.get("data", {})
+				volume_24h = float(t_data.get("volume", 0.0))
+				
 			elif exchange == "gate.io":
 				asks = [[float(x[0]), float(x[1])] for x in data.get("asks", [])]
 				bids = [[float(x[0]), float(x[1])] for x in data.get("bids", [])]
+				if isinstance(ticker_data, list) and ticker_data:
+					volume_24h = float(ticker_data[0].get("quote_volume", 0.0))
+				
 			elif exchange == "kucoin":
 				result = data.get("data", {})
 				asks = [[float(x[0]), float(x[1])] for x in result.get("asks", [])]
 				bids = [[float(x[0]), float(x[1])] for x in result.get("bids", [])]
+				volume_24h = float(ticker_data.get("data", {}).get("volValue", 0.0))
 
-			return {"asks": asks, "bids": bids}
+			return {"asks": asks, "bids": bids, "volume_24h": volume_24h}
 		except Exception:
 			return {}
 
@@ -213,6 +235,13 @@ class AsyncMarketScanner:
 				if ex_a == ex_b:
 					continue
 				
+				# Извлекаем суточный объем торгов монеты на бирже покупки
+				vol_24h = ob_a.get("volume_24h", 0.0)
+				
+				# ЖЕСТКАЯ ФИЛЬТРАЦИЯ ПО ОБЪЕМУ ТОРГОВ ИЗ КОНФИГА БОТА
+				if vol_24h < self.min_pair_volume_24h:
+					continue  # Монета неликвидна, скипаем расчет математики спреда
+				
 				self.analyzer.calculate_spot_spread(
 					symbol=symbol,
 					exchange_a_name=ex_a,
@@ -221,22 +250,24 @@ class AsyncMarketScanner:
 					orderbook_b=ob_b,
 					base_volume=self.base_volume,
 					min_spread_pct=self.min_spread,
-					trade_fee_pct=self.trade_fee
+					max_spread_pct=self.max_spread,
+					trade_fee_pct=self.trade_fee,
+					volume_24h=vol_24h
 				)
 
 	async def start_loop(self):
-		# Сначала собираем все USDT пары на основе ссылок из hosts
 		await self.load_all_usdt_pairs()
 		
 		print("\n📊 Асинхронный радар-скринер запущен в ПОЛНОСТЬЮ ДИНАМИЧЕСКОМ режиме.")
-		print(f"⚙️ Фильтр спреда для сохранения в БД: >= {self.min_spread}%")
+		print(f"⚙️ Порог спреда: от {self.min_spread}% до {self.max_spread}%")
+		print(f"💰 Рабочий объем ордера: {self.base_volume} USDT")
+		print(f"📈 Фильтр мин. суточного объема пары: >= {self.min_pair_volume_24h} USDT")
 		print(f"⏱️ Пауза между циклами: {self.scan_delay} сек.\n")
 
 		while True:
 			try:
 				t_start = time.time()
 				
-				# Обрабатываем пары пачками по 30 штук, чтобы избежать перегрузки сетевых сокетов
 				batch_size = 30
 				for i in range(0, len(self.pairs), batch_size):
 					batch = self.pairs[i:i+batch_size]
@@ -254,6 +285,7 @@ class AsyncMarketScanner:
 			except Exception as e:
 				print(f"🚨 [ОШИБКА ЦИКЛА]: {e}")
 				await asyncio.sleep(5)
+
 
 def main():
 	config = load_config()
