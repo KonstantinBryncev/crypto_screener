@@ -19,15 +19,14 @@ class DBStorage:
             port=self.config.get("port", 5432)
         )
 
-    def save_possible_trade(self, symbol, buy_exchange, sell_exchange, buy_price, sell_price, spread_pct, volume_24h=0.0):
+    def save_possible_trade(self, symbol, buy_exchange, sell_exchange, buy_price, sell_price, spread_pct):
         """
-        Запись найденной арбитражной ситуации в таблицу possible_trades.
-        Записывает точные цены и разницу в процентах (spread_pct).
+        Запись найденной арбитражной ситуации в таблицу possible_trades без учета суточного объема.
         """
         sql = """
             INSERT INTO possible_trades 
-            (timestamp, symbol, buy_exchange, sell_exchange, buy_price, sell_price, spread_pct, volume_24h)
-            VALUES (CURRENT_TIMESTAMP, %s, %s, %s, %s, %s, %s, %s);
+            (timestamp, symbol, buy_exchange, sell_exchange, buy_price, sell_price, spread_pct)
+            VALUES (CURRENT_TIMESTAMP, %s, %s, %s, %s, %s, %s);
         """
         conn = self._get_connection()
         try:
@@ -38,8 +37,7 @@ class DBStorage:
                     sell_exchange.lower(),
                     float(buy_price),
                     float(sell_price),
-                    float(spread_pct),
-                    float(volume_24h)
+                    float(spread_pct)
                 ))
             conn.commit()
         except Exception as e:

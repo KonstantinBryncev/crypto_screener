@@ -67,6 +67,7 @@
 		"min_spread_percent": -5.0,
 		"max_spread_percent": 50.0,
 		"min_volume_usdt": 1,
+		"trade_fee_percent": 0.1,
 		"enable_telegram_alerts": true,
 
 		"_comment_economy": "=== НАСТРОЙКИ ЭКОНОМИКИ И ТЕСТОВОГО БАЛАНСА ===",
