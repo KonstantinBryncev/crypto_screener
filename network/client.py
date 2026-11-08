@@ -65,8 +65,16 @@ class AsyncHttpClient:
 				print("⚠️ [СЕТЬ] VLESS ссылка не настроена. Скринер работает в прямом сетевом режиме.")
 				return
 
+			# 🐧 Автоматически определяем расширение бинарника в зависимости от ОС сервера
+			default_bin = "bin/xray" if sys.platform != "win32" else "bin/xray.exe"
+			xray_bin_setting = net_settings.get("xray_bin_path", default_bin)
+			
+			# Если в конфигурации жестко зашит .exe, а мы запустились на Ubuntu Linux — исправляем на лету
+			if sys.platform != "win32" and xray_bin_setting.endswith(".exe"):
+				xray_bin_setting = xray_bin_setting.replace(".exe", "")
+
 			project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-			xray_bin = os.path.normpath(os.path.join(project_root, net_settings.get("xray_bin_path", "bin/xray.exe")))
+			xray_bin = os.path.normpath(os.path.join(project_root, xray_bin_setting))
 			config_output = os.path.join(project_root, net_settings.get("config_output_path", "config.json"))
 
 			self.local_port = self._find_free_port()
@@ -118,7 +126,7 @@ class AsyncHttpClient:
 				json.dump(xray_config, f, indent=4, ensure_ascii=False)
 
 			if not os.path.exists(xray_bin):
-				print(f"❌ [СЕТЬ] Исполняемый файл ядра Xray отсутствует: {xray_bin}")
+				print(f"❌ [СЕТЬ] Исполняемый файл ядра Xray отсутствует по пути: {xray_bin}")
 				return
 
 			self.xray_process = subprocess.Popen(
@@ -216,7 +224,7 @@ class AsyncHttpClient:
 			return None
 
 	async def close(self):
-		"""Безопасная остановка сессий и выгрузка xray.exe из памяти ОС"""
+		"""Безопасная остановка сессий и выгрузка xray из памяти ОС"""
 		if self.session and not self.session.closed:
 			await self.session.close()
 		if self.xray_process:
