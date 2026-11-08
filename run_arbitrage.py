@@ -2,30 +2,13 @@ import os
 import sys
 import time
 import json
+import asyncio
 from datetime import datetime
+from curl_cffi import requests
 
-# Импортируем наш собственный модуль для работы с PostgreSQL
+# Наш коннектор базы данных и анализатор
 from database.storage import DBStorage
-
-def fetch_mock_ticker_data():
-	"""
-	Временная функция, которая имитирует получение реальных стаканов с 4 бирж.
-	Возвращает структуру цен для демонстрации логики сравнения и фильтрации.
-	"""
-	return {
-		"BTC/USDT": {
-			"Bybit": {"buy_price": 68000.0, "sell_price": 68010.0, "volume_24h": 15000000},
-			"KuCoin": {"buy_price": 68120.0, "sell_price": 68130.0, "volume_24h": 8000000},
-			"OKX": {"buy_price": 67990.0, "sell_price": 68005.0, "volume_24h": 12000000},
-			"Gate.io": {"buy_price": 68050.0, "sell_price": 68065.0, "volume_24h": 4000000}
-		},
-		"ETH/USDT": {
-			"Bybit": {"buy_price": 2450.0, "sell_price": 2451.5, "volume_24h": 5000000},
-			"KuCoin": {"buy_price": 2455.0, "sell_price": 2456.0, "volume_24h": 3000000},
-			"OKX": {"buy_price": 2449.0, "sell_price": 2450.2, "volume_24h": 4500000},
-			"Gate.io": {"buy_price": 2452.0, "sell_price": 2453.8, "volume_24h": 1200000}
-		}
-	}
+from core.analyzer import ArbitrageAnalyzer
 
 def load_config():
 	"""Загрузка конфигурационного файла из папки config"""
@@ -36,88 +19,250 @@ def load_config():
 			return json.load(f)
 	return {}
 
+class AsyncMarketScanner:
+	def __init__(self, config):
+		self.config = config
+		
+		# Вытаскиваем базовые хосты строго из твоего блока конфигурации "hosts"
+		hosts = config.get("hosts", {})
+		try:
+			self.hosts = {
+				"bybit": hosts["bybit_base_url"],
+				"kucoin": hosts["kucoin_base_url"],
+				"okx": hosts["okx_base_url"],
+				"gate.io": hosts["gate_base_url"],
+				"bingx": hosts["bingx_base_url"]
+			}
+		except KeyError as e:
+			print(f"🚨 [КРИТИЧЕСКАЯ ОШИБКА КОНФИГА]: В config_bot.json в блоке 'hosts' отсутствует ключ: {e}")
+			sys.exit(1)
+		
+		# Чтение настроек арбитража
+		arbitrage_settings = config.get("arbitrage", {})
+		self.min_spread = arbitrage_settings.get("min_spread_percent", 0.65)
+		self.scan_delay = arbitrage_settings.get("scan_delay_seconds", 3.0)
+		self.base_volume = arbitrage_settings.get("base_volume_usdt", 100.0)
+		self.trade_fee = arbitrage_settings.get("trade_fee_pct", 0.1)
+		
+		# Инициализация ядра анализатора
+		self.analyzer = ArbitrageAnalyzer()
+		
+		# Сессия curl_cffi для быстрых и безопасных запросов без банов
+		self.session = requests.AsyncSession()
+		
+		# Динамический список пар, который заполнится автоматически
+		self.pairs = []
+
+	async def load_all_usdt_pairs(self):
+		"""Автоматически загружает абсолютно все доступные спотовые пары к USDT со всех 5 бирж используя хосты из конфига"""
+		print("🔄 Собираем список всех доступных монет к USDT с бирж...")
+		
+		exchanges_endpoints = {
+			"bybit": "/v5/market/instruments-info?category=spot",
+			"okx": "/api/v5/public/instruments?instType=SPOT",
+			"bingx": "/openApi/spot/v1/common/symbols",
+			"gate.io": "/crypto/currency_pairs",
+			"kucoin": "/api/v1/symbols"
+		}
+		
+		all_sets = []
+		
+		for exchange, endpoint in exchanges_endpoints.items():
+			try:
+				# Собираем полный URL динамически из конфига
+				base_url = self.hosts[exchange].rstrip("/")
+				
+				# Корректируем эндпоинт gate.io, если в конфиге не указана версия api
+				if exchange == "gate.io" and not base_url.endswith("v4"):
+					url = f"{base_url}/api/v4{endpoint}"
+				else:
+					url = f"{base_url}{endpoint}"
+					
+				response = await self.session.get(url, impersonate="chrome", timeout=5.0)
+				if response.status_code != 200:
+					continue
+				
+				data = response.json()
+				ex_pairs = set()
+				
+				if exchange == "bybit":
+					for item in data.get("result", {}).get("list", []):
+						if item.get("quoteCoin") == "USDT":
+							base = item.get("baseCoin")
+							ex_pairs.add(f"{base}/USDT")
+							
+				elif exchange == "okx":
+					for item in data.get("data", []):
+						if item.get("ctValCcy") == "USDT" or item.get("instId", "").endswith("-USDT"):
+							base = item.get("baseCcy")
+							ex_pairs.add(f"{base}/USDT")
+							
+				elif exchange == "bingx":
+					for item in data.get("data", {}).get("symbols", []):
+						if item.get("quoteAsset") == "USDT":
+							base = item.get("baseAsset")
+							ex_pairs.add(f"{base}/USDT")
+							
+				elif exchange == "gate.io":
+					for item in data:
+						if item.get("quote") == "USDT" and not item.get("trade_status") == "untraded":
+							base = item.get("base")
+							ex_pairs.add(f"{base}/USDT")
+							
+				elif exchange == "kucoin":
+					for item in data.get("data", []):
+						if item.get("quoteCurrency") == "USDT" and item.get("enableTrading"):
+							base = item.get("baseCurrency")
+							ex_pairs.add(f"{base}/USDT")
+				
+				if ex_pairs:
+					all_sets.append(ex_pairs)
+					print(f"🔹 {exchange.upper()}: Найдено {len(ex_pairs)} пар к USDT")
+					
+			except Exception as e:
+				print(f"⚠️ Не удалось загрузить пары с {exchange}: {e}")
+
+		if all_sets:
+			# Пересечение: оставляем только монеты, торгующиеся минимум на двух биржах из пяти
+			all_discovered = set.union(*all_sets)
+			valid_pairs = []
+			for pair in all_discovered:
+				count = sum(1 for s in all_sets if pair in s)
+				if count >= 2:
+					valid_pairs.append(pair)
+					
+			self.pairs = sorted(valid_pairs)
+			print(f"✅ Итог: К мониторингу готово {len(self.pairs)} общих торговых пар!")
+		else:
+			print("🚨 Критическая ошибка: не удалось собрать пары. Откат к базовым BTC и ETH.")
+			self.pairs = ["BTC/USDT", "ETH/USDT"]
+
+	def _format_symbol(self, symbol: str, exchange: str) -> str:
+		"""Приведение пары монет к стандартам API конкретной биржи"""
+		base, quote = symbol.split("/")
+		if exchange in ["bybit", "okx", "gate.io"]:
+			return f"{base}{quote}".upper()
+		elif exchange in ["kucoin", "bingx"]:
+			return f"{base}-{quote}".upper()
+		return symbol
+
+	async def fetch_orderbook(self, exchange: str, symbol: str) -> dict:
+		"""Асинхронное получение стакана с биржи через динамические хосты из конфигурации"""
+		formatted_symbol = self._format_symbol(symbol, exchange)
+		base_url = self.hosts[exchange].rstrip("/")
+		
+		# Формируем относительные эндпоинты под стаканы
+		if exchange == "bybit":
+			url = f"{base_url}/v5/market/orderbook?category=spot&symbol={formatted_symbol}&limit=5"
+		elif exchange == "okx":
+			url = f"{base_url}/api/v5/market/books?instId={formatted_symbol}&sz=5"
+		elif exchange == "bingx":
+			url = f"{base_url}/openApi/spot/v1/market/depth?symbol={formatted_symbol}&limit=5"
+		elif exchange == "gate.io":
+			if not base_url.endswith("v4"):
+				url = f"{base_url}/api/v4/crypto/order_book?currency_pair={formatted_symbol}&limit=5"
+			else:
+				url = f"{base_url}/crypto/order_book?currency_pair={formatted_symbol}&limit=5"
+		elif exchange == "kucoin":
+			url = f"{base_url}/api/v1/market/orderbook/level2_depth20?symbol={formatted_symbol}"
+		else:
+			return {}
+
+		try:
+			response = await self.session.get(url, impersonate="chrome", timeout=2.5)
+			if response.status_code != 200:
+				return {}
+			
+			data = response.json()
+			asks, bids = [], []
+
+			if exchange == "bybit":
+				result = data.get("result", {})
+				asks = [[float(x[0]), float(x[1])] for x in result.get("a", [])]
+				bids = [[float(x[0]), float(x[1])] for x in result.get("b", [])]
+			elif exchange == "okx":
+				result = data.get("data", [{}])
+				asks = [[float(x[0]), float(x[1])] for x in result.get("asks", [])]
+				bids = [[float(x[0]), float(x[1])] for x in result.get("bids", [])]
+			elif exchange == "bingx":
+				result = data.get("data", {})
+				asks = [[float(x[0]), float(x[1])] for x in result.get("asks", [])]
+				bids = [[float(x[0]), float(x[1])] for x in result.get("bids", [])]
+			elif exchange == "gate.io":
+				asks = [[float(x[0]), float(x[1])] for x in data.get("asks", [])]
+				bids = [[float(x[0]), float(x[1])] for x in data.get("bids", [])]
+			elif exchange == "kucoin":
+				result = data.get("data", {})
+				asks = [[float(x[0]), float(x[1])] for x in result.get("asks", [])]
+				bids = [[float(x[0]), float(x[1])] for x in result.get("bids", [])]
+
+			return {"asks": asks, "bids": bids}
+		except Exception:
+			return {}
+
+	async def scan_pair(self, symbol: str):
+		"""Параллельный сбор стаканов по одной паре со всех бирж и вычисление спреда"""
+		exchanges = ["bybit", "okx", "bingx", "gate.io", "kucoin"]
+		tasks = [self.fetch_orderbook(ex, symbol) for ex in exchanges]
+		results = await asyncio.gather(*tasks)
+		
+		orderbooks = {exchanges[i]: results[i] for i in range(len(exchanges)) if results[i] and (results[i].get("asks") or results[i].get("bids"))}
+
+		for ex_a, ob_a in orderbooks.items():
+			for ex_b, ob_b in orderbooks.items():
+				if ex_a == ex_b:
+					continue
+				
+				self.analyzer.calculate_spot_spread(
+					symbol=symbol,
+					exchange_a_name=ex_a,
+					orderbook_a=ob_a,
+					exchange_b_name=ex_b,
+					orderbook_b=ob_b,
+					base_volume=self.base_volume,
+					min_spread_pct=self.min_spread,
+					trade_fee_pct=self.trade_fee
+				)
+
+	async def start_loop(self):
+		# Сначала собираем все USDT пары на основе ссылок из hosts
+		await self.load_all_usdt_pairs()
+		
+		print("\n📊 Асинхронный радар-скринер запущен в ПОЛНОСТЬЮ ДИНАМИЧЕСКОМ режиме.")
+		print(f"⚙️ Фильтр спреда для сохранения в БД: >= {self.min_spread}%")
+		print(f"⏱️ Пауза между циклами: {self.scan_delay} сек.\n")
+
+		while True:
+			try:
+				t_start = time.time()
+				
+				# Обрабатываем пары пачками по 30 штук, чтобы избежать перегрузки сетевых сокетов
+				batch_size = 30
+				for i in range(0, len(self.pairs), batch_size):
+					batch = self.pairs[i:i+batch_size]
+					scan_tasks = [self.scan_pair(pair) for pair in batch]
+					await asyncio.gather(*scan_tasks)
+					await asyncio.sleep(0.2)
+				
+				elapsed = time.time() - t_start
+				sleep_time = max(0.1, self.scan_delay - elapsed)
+				await asyncio.sleep(sleep_time)
+				
+			except KeyboardInterrupt:
+				print("\n🛑 Скринер остановлен.")
+				break
+			except Exception as e:
+				print(f"🚨 [ОШИБКА ЦИКЛА]: {e}")
+				await asyncio.sleep(5)
+
 def main():
-	print("🟢 Запуск главного скрипта арбитражного скринера...")
-	
-	# Загружаем настройки из конфигурационного файла
 	config = load_config()
 	if not config:
-		print("🚨 [ОШИБКА] Не удалось загрузить config_bot.json! Завершение работы.")
+		print("🚨 [ОШИБКА] config_bot.json не найден!")
 		sys.exit(1)
 		
-	# Инициализируем хранилище базы данных
-	storage = DBStorage(config)
-	
-	# Безопасное извлечение настроек арбитража (Защита от KeyError)
-	arbitrage_settings = config.get("arbitrage", config.get("arbitrage_settings", {}))
-	min_spread_console = arbitrage_settings.get("min_spread_percent", 0.65)
-	scan_delay_seconds = arbitrage_settings.get("scan_delay_seconds", 10.0)
-	
-	print(f"📊 Скринер запущен. Порог вывода возможных сделок в консоль: {min_spread_console}%")
-	print(f"⏱️ Задержка между сканированиями: {scan_delay_seconds} сек.")
-	print("Сбор общей статистики в таблицу possible_trades выполняется автоматически в фоне.\n")
-	print("ВРЕМЯ\t\t\tПАРА\t\tНАПРАВЛЕНИЕ\t\tСПРЕД\tЦЕНЫ")
-	print("-" * 90)
-
-	while True:
-		try:
-			# Получаем свежие котировки по всем монетам и биржам
-			market_data = fetch_mock_ticker_data()
-			timestamp_now = datetime.now()
-			timestamp_str = timestamp_now.strftime("%Y-%m-%d %H:%M:%S")
-
-			# Перебираем каждую торговую пару (например, BTC/USDT)
-			for symbol, exchanges in market_data.items():
-				
-				# Ищем самую выгодную биржу для покупки (минимальная цена продажи sell_price)
-				buy_exchange = min(exchanges, key=lambda e: exchanges[e]["sell_price"])
-				buy_price = exchanges[buy_exchange]["sell_price"]
-				
-				# Ищем самую выгодную биржу для продажи (максимальная цена покупки buy_price)
-				sell_exchange = max(exchanges, key=lambda e: exchanges[e]["buy_price"])
-				sell_price = exchanges[sell_exchange]["buy_price"]
-				
-				# Берем суточный объем по паре для фильтрации ликвидности
-				volume_24h = exchanges[buy_exchange]["volume_24h"]
-
-				# Проверяем, что покупка и продажа происходят на разных биржах
-				if buy_exchange != sell_exchange:
-					
-					# Рассчитываем грязный процент межбиржевого спреда
-					spread_pct = ((sell_price - buy_price) / buy_price) * 100
-
-					# Если спред положительный — фиксируем потенциальный арбитраж
-					if spread_pct > 0:
-						
-						# 1. ОТПРАВЛЯЕМ АБСОЛЮТНО ВСЕ СИГНАЛЫ В БАЗУ ДАННЫХ ДЛЯ СБОРА ТОП-10 ПАР
-						try:
-							storage.save_possible_trade(
-								symbol=symbol,
-								buy_exchange=buy_exchange,
-								sell_exchange=sell_exchange,
-								buy_price=buy_price,
-								sell_price=sell_price,
-								spread_pct=round(spread_pct, 4),
-								volume_24h=volume_24h
-							)
-						except Exception as db_err:
-							# Предотвращаем падение главного цикла при сбоях сети СУБД
-							pass
-
-						# 2. ФИЛЬТРУЕМ ВЫВОД В КОНСОЛЬ: Показываем только жирные возможные сделки
-						if spread_pct >= min_spread_console:
-							# Вывод в консоль со звуковым сигналом \a
-							print(f"💰\t[{timestamp_str}]\t{symbol}\t{buy_exchange} ➔ {sell_exchange}\t{spread_pct:.2f}%\t{buy_price} ➔ {sell_price}\a")
-
-			# Задержка между циклами сканирования рынка
-			time.sleep(scan_delay_seconds)
-
-		except KeyboardInterrupt:
-			print("\n🛑 Скринер остановлен пользователем.")
-			break
-		except Exception as e:
-			print(f"🚨 [СИСТЕМНАЯ ОШИБКА В ЦИКЛЕ]: {e}")
-			time.sleep(5)
+	scanner = AsyncMarketScanner(config)
+	asyncio.run(scanner.start_loop())
 
 if __name__ == "__main__":
 	main()

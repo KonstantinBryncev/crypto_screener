@@ -1,4 +1,3 @@
-# Файл в корне проекта: migrate_csv.py
 import os
 import json
 from database.storage import DBStorage

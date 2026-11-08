@@ -1,4 +1,3 @@
-# Модуль: database/storage.py
 import psycopg2
 from psycopg2.extras import Json
 from datetime import datetime
@@ -34,9 +33,9 @@ class DBStorage:
         try:
             with conn.cursor() as cur:
                 cur.execute(sql, (
-                    symbol,
-                    buy_exchange,
-                    sell_exchange,
+                    symbol.upper(),
+                    buy_exchange.lower(),
+                    sell_exchange.lower(),
                     float(buy_price),
                     float(sell_price),
                     float(spread_pct),

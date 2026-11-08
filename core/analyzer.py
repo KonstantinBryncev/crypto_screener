@@ -1,4 +1,3 @@
-# Модуль: core/analyzer.py
 import logging
 import os
 import json
@@ -9,7 +8,7 @@ logger = logging.getLogger("ArbitrageAnalyzer")
 class ArbitrageAnalyzer:
     """
     Математическое ядро скринера-радара.
-    Вычисляет расхождения цен и автоматически логирует каждую ситуацию в PostgreSQL.
+    Вычисляет расхождения цен и автоматически логирует профитные ситуации в PostgreSQL.
     """
     def __init__(self):
         self.notifier = None
@@ -70,15 +69,12 @@ class ArbitrageAnalyzer:
         orderbook_a: dict,
         exchange_b_name: str,
         orderbook_b: dict,
-        transfer_fee: float,
         base_volume: float,
         min_spread_pct: float,
-        trade_fee_pct: float,
-        crypto_fees_dict: dict
+        trade_fee_pct: float
     ):
         """
-        Расчет спреда и логирование в СУБД:
-        Порог фильтрации считывается динамически из конфигурационного файла.
+        Расчет спреда и логирование в СУБД только при прохождении фильтра спреда.
         """
         asks_a = orderbook_a.get("asks", [])
         bids_b = orderbook_b.get("bids", [])
@@ -94,10 +90,8 @@ class ArbitrageAnalyzer:
         crypto_bought = base_volume / buy_price_a
         crypto_after_fee_a = crypto_bought * (1.0 - (trade_fee_pct / 100.0))
 
-        # 2. Продажа на Бирже Б (без учета сетевых издержек вывода)
+        # 2. Продажа на Бирже Б
         crypto_to_sell_b = crypto_after_fee_a
-        
-        # Вычисляем емкость первого уровня стакана Б для контроля ликвидности
         first_bid_price = float(bids_b[0][0]) if bids_b and bids_b[0] else 0.0
         target_sell_volume_usdt = crypto_to_sell_b * first_bid_price
         
@@ -108,44 +102,34 @@ class ArbitrageAnalyzer:
         usdt_received = crypto_to_sell_b * sell_price_b
         final_usdt = usdt_received * (1.0 - (trade_fee_pct / 100.0))
 
-        # 3. Подсчет спреда
+        # 3. Подсчет чистого спреда
         net_profit_usdt = final_usdt - base_volume
         net_spread_pct = (net_profit_usdt / base_volume) * 100.0
 
-        # 4. ЗАПИСЬ ВСЕХ ПОЛОЖИТЕЛЬНЫХ СИТУАЦИЙ В POSTGRESQL (Для сбора ТОП-10)
-        if net_spread_pct > 0.0 and self.storage:
-            try:
-                conn = self.storage._get_connection()
-                sql = """
-                    INSERT INTO possible_trades 
-                    (symbol, buy_exchange, sell_exchange, buy_price, sell_price, spread_pct, volume_24h)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s);
-                """
-                with conn.cursor() as cur:
-                    cur.execute(sql, (
-                        symbol.upper(), 
-                        exchange_a_name.lower(), 
-                        exchange_b_name.lower(), 
-                        float(buy_price_a), 
-                        float(sell_price_b), 
-                        float(net_spread_pct),
-                        float(base_volume)
-                    ))
-                conn.commit()
-                conn.close()
-            except Exception as db_err:
-                logger.error(f"Ошибка записи арбитражного лога в Postgres: {db_err}")
-
-        # 5. Проверка на триггер (Порог min_spread_pct берется строго из твоего конфига JSON)
+        # 4. ФИЛЬТРАЦИЯ И ЗАПИСЬ: Строго проверяем порог из твоего конфига JSON
         if net_spread_pct >= min_spread_pct:
+            if self.storage:
+                try:
+                    self.storage.save_possible_trade(
+                        symbol=symbol,
+                        buy_exchange=exchange_a_name,
+                        sell_exchange=exchange_b_name,
+                        buy_price=buy_price_a,
+                        sell_price=sell_price_b,
+                        spread_pct=round(net_spread_pct, 4),
+                        volume_24h=base_volume
+                    )
+                except Exception as db_err:
+                    logger.error(f"Ошибка записи арбитражного лога в Postgres: {db_err}")
+
+            # Вывод сигнала в консоль
             signal_text = (
                 f"🚨 [РАДАР] Сигнал {symbol}!\n"
                 f"📥 Купить [{exchange_a_name.upper()}]: {buy_price_a:.4f}\n"
                 f"📤 Продать [{exchange_b_name.upper()}]: {sell_price_b:.4f}\n"
                 f"💰 Объем: {base_volume} USDT\n"
-                f"📈 Спред (без учета вывода): +{net_profit_usdt:.2f} USDT ({net_spread_pct:.2f}%)"
+                f"📈 Чистый Спред: +{net_profit_usdt:.2f} USDT ({net_spread_pct:.2f}%)"
             )
-            
             print("\n" + "="*50)
             print(signal_text)
             print("="*50 + "\n")
