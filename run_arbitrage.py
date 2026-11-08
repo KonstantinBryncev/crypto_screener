@@ -43,9 +43,6 @@ class AsyncMarketScanner:
 		self.max_spread = arbitrage_settings.get("max_spread_percent", 5.0)
 		self.scan_delay = arbitrage_settings.get("scan_delay_seconds", 10.0)
 		self.base_volume = arbitrage_settings.get("base_order_usdt", 500.0)
-		
-		# ЧИТАЕМ МИНИМАЛЬНЫЙ СУТОЧНЫЙ ОБЪЕМ ИЗ ТВОЕГО КОНФИГА JSON
-		self.min_pair_volume_24h = arbitrage_settings.get("min_volume_usdt", 500.0)
 		self.trade_fee = 0.1  # Процент стандартной комиссии спота
 		
 		# Инициализация ядра анализатора
@@ -238,10 +235,7 @@ class AsyncMarketScanner:
 				# Извлекаем суточный объем торгов монеты на бирже покупки
 				vol_24h = ob_a.get("volume_24h", 0.0)
 				
-				# ЖЕСТКАЯ ФИЛЬТРАЦИЯ ПО ОБЪЕМУ ТОРГОВ ИЗ КОНФИГА БОТА
-				if vol_24h < self.min_pair_volume_24h:
-					continue  # Монета неликвидна, скипаем расчет математики спреда
-				
+				# ПЕРЕДАЕМ ПАРАМЕТРЫ СРАЗУ В АНАЛИЗАТОР (Проверка объема уйдет вторым шагом внутрь)
 				self.analyzer.calculate_spot_spread(
 					symbol=symbol,
 					exchange_a_name=ex_a,
@@ -261,7 +255,6 @@ class AsyncMarketScanner:
 		print("\n📊 Асинхронный радар-скринер запущен в ПОЛНОСТЬЮ ДИНАМИЧЕСКОМ режиме.")
 		print(f"⚙️ Порог спреда: от {self.min_spread}% до {self.max_spread}%")
 		print(f"💰 Рабочий объем ордера: {self.base_volume} USDT")
-		print(f"📈 Фильтр мин. суточного объема пары: >= {self.min_pair_volume_24h} USDT")
 		print(f"⏱️ Пауза между циклами: {self.scan_delay} сек.\n")
 
 		while True:
@@ -298,3 +291,4 @@ def main():
 
 if __name__ == "__main__":
 	main()
+

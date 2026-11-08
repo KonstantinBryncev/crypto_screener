@@ -71,10 +71,12 @@ class ArbitrageAnalyzer:
         orderbook_b: dict,
         base_volume: float,
         min_spread_pct: float,
-        trade_fee_pct: float
+        max_spread_pct: float,
+        trade_fee_pct: float,
+        volume_24h: float
     ):
         """
-        Расчет спреда и логирование в СУБД только при прохождении фильтра спреда.
+        Расчет спреда и логирование в СУБД с проверкой фильтра объема на втором шаге.
         """
         asks_a = orderbook_a.get("asks", [])
         bids_b = orderbook_b.get("bids", [])
@@ -106,8 +108,27 @@ class ArbitrageAnalyzer:
         net_profit_usdt = final_usdt - base_volume
         net_spread_pct = (net_profit_usdt / base_volume) * 100.0
 
-        # 4. ФИЛЬТРАЦИЯ И ЗАПИСЬ: Строго проверяем порог из твоего конфига JSON
-        if net_spread_pct >= min_spread_pct:
+        # 4. ФИЛЬТРАЦИЯ СПРЕДА (Первый шаг проверки)
+        if min_spread_pct <= net_spread_pct <= max_spread_pct:
+            
+            # 5. ФИЛЬТРАЦИЯ ОБЪЕМА ИЗ КОНФИГА (Второй шаг проверки)
+            min_volume_limit = 0.0
+            try:
+                current_dir = os.path.dirname(os.path.abspath(__file__))
+                project_root = os.path.dirname(current_dir)
+                config_path = os.path.join(project_root, "config", "config_bot.json")
+                if os.path.exists(config_path):
+                    with open(config_path, "r", encoding="utf-8") as f:
+                        b_config = json.load(f)
+                    min_volume_limit = b_config.get("arbitrage", {}).get("min_volume_usdt", 0.0)
+            except Exception:
+                pass
+
+            # Если суточный объем торгов монеты ниже лимита из конфига — выходим
+            if volume_24h < min_volume_limit:
+                return
+
+            # Запись в PostgreSQL, если монета прошла оба критерия
             if self.storage:
                 try:
                     self.storage.save_possible_trade(
@@ -117,7 +138,7 @@ class ArbitrageAnalyzer:
                         buy_price=buy_price_a,
                         sell_price=sell_price_b,
                         spread_pct=round(net_spread_pct, 4),
-                        volume_24h=base_volume
+                        volume_24h=volume_24h
                     )
                 except Exception as db_err:
                     logger.error(f"Ошибка записи арбитражного лога в Postgres: {db_err}")
@@ -125,9 +146,10 @@ class ArbitrageAnalyzer:
             # Вывод сигнала в консоль
             signal_text = (
                 f"🚨 [РАДАР] Сигнал {symbol}!\n"
-                f"📥 Купить [{exchange_a_name.upper()}]: {buy_price_a:.4f}\n"
-                f"📤 Продать [{exchange_b_name.upper()}]: {sell_price_b:.4f}\n"
-                f"💰 Объем: {base_volume} USDT\n"
+                f"📥 Купить [{exchange_a_name.upper()}]: {buy_price_a:.6f}\n"
+                f"📤 Продать [{exchange_b_name.upper()}]: {sell_price_b:.6f}\n"
+                f"💰 Тест-Объем: {base_volume} USDT\n"
+                f"📊 Суточный объем пары: {volume_24h:,.2f} USDT\n"
                 f"📈 Чистый Спред: +{net_profit_usdt:.2f} USDT ({net_spread_pct:.2f}%)"
             )
             print("\n" + "="*50)
