@@ -64,9 +64,9 @@
 		"snapshot_interval_minutes": 10.0,
 
 		"_comment_filters": "=== НАСТРОЙКИ ФИЛЬТРАЦИИ СИГНАЛОВ И ВЫВОДА В КОНСОЛЬ ===",
-		"min_spread_percent": 0.5,
-		"max_spread_percent": 5.0,
-		"min_volume_usdt": 500.0,
+		"min_spread_percent": -1,
+		"max_spread_percent": 50,
+		"min_volume_usdt": 50000,
 		"enable_telegram_alerts": true,
 
 		"_comment_economy": "=== НАСТРОЙКИ ЭКОНОМИКИ И ТЕСТОВОГО БАЛАНСА ===",
