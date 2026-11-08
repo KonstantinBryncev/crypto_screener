@@ -66,8 +66,8 @@
 		"_comment_filters": "=== НАСТРОЙКИ ФИЛЬТРАЦИИ СИГНАЛОВ И ВЫВОДА В КОНСОЛЬ ===",
 		"min_spread_percent": -1,
 		"max_spread_percent": 50,
-		"min_volume_usdt": 50000,
-		"enable_telegram_alerts": true,
+		"min_volume_usdt": 5000,
+		"enable_telegram_alerts": false,
 
 		"_comment_economy": "=== НАСТРОЙКИ ЭКОНОМИКИ И ТЕСТОВОГО БАЛАНСА ===",
 		"base_order_usdt": 500.0,
