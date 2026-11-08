@@ -108,6 +108,9 @@ class ArbitrageAnalyzer:
         net_profit_usdt = final_usdt - base_volume
         net_spread_pct = (net_profit_usdt / base_volume) * 100.0
 
+        # 🔍 ВРЕМЕННЫЙ ДЕБАГ-ЛОГ ДЛЯ БРО:
+        print(f"🔍 [ТЕСТ] {symbol} {exchange_a_name.upper()}➔{exchange_b_name.upper()} | Спред: {net_spread_pct:.2f}% | Объем 24h: {volume_24h:,.2f} USDT")
+
         # 4. ФИЛЬТРАЦИЯ СПРЕДА (Первый шаг проверки)
         if min_spread_pct <= net_spread_pct <= max_spread_pct:
             
@@ -143,7 +146,7 @@ class ArbitrageAnalyzer:
                 except Exception as db_err:
                     logger.error(f"Ошибка записи арбитражного лога в Postgres: {db_err}")
 
-            # Вывод сигнала в консоль
+            # Вывод боевого сигнала в консоль
             signal_text = (
                 f"🚨 [РАДАР] Сигнал {symbol}!\n"
                 f"📥 Купить [{exchange_a_name.upper()}]: {buy_price_a:.6f}\n"
