@@ -39,11 +39,12 @@ class AsyncHttpClient:
 		return cls._instance
 
 	def _find_free_port(self) -> int:
-		"""Динамический поиск свободного порта в системе"""
+		"""Динамический поиск свободного порта в системе (возвращает только число)"""
 		try:
 			with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
 				s.bind(('127.0.0.1', 0))
-				return s.getsockname()
+				# 🎯 ИСПРАВЛЕНИЕ: Берем строго второй элемент [1] (числовой порт), а не весь кортеж
+				return int(s.getsockname()[1])
 		except Exception as e:
 			logger.error(f"Не удалось динамически найти порт: {e}. Берем резервный.")
 			return 10808
@@ -85,11 +86,11 @@ class AsyncHttpClient:
 			cleaned_params = {}
 			for k, v in query_params.items():
 				if v and len(v) > 0:
-					cleaned_params[k] = str(v[0])
+					# 🛠 Чистим строки от мусора, скобок и кавычек
+					cleaned_params[k] = str(v[0]).strip()
 
 			outbound_tag = "proxy"
 			
-			# 🛠 ХАК ДЛЯ СОВМЕСТИМОСТИ XRAY 26+: Автоматически мигрируем устаревший grpc на xhttp
 			transport_type = cleaned_params.get("type", "tcp")
 			if transport_type == "grpc":
 				transport_type = "xhttp"
@@ -108,7 +109,6 @@ class AsyncHttpClient:
 					"fingerprint": cleaned_params.get("fp", "chrome")
 				}
 				
-			# Настройка конфигурации под XHTTP (заменяет устаревший grpc)
 			if transport_type == "xhttp":
 				stream_settings["xhttpSettings"] = {
 					"mode": "stream-up",
