@@ -14,7 +14,8 @@ class BingXExchange:
 		self.api_secret = api_secret
 
 	async def init_exchange(self):
-		"""Штатная инициализация шлюза BingX"""
+		"""Штатная инициализация шлюза BingX с выводом лога в консоль"""
+		print(f"✅ [BINGX Direct] Спотовое подключение запущено на хосте: {self.base_url}", flush=True)
 		return True
 
 	async def fetch_order_book(self, symbol: str, limit: int = 5) -> Optional[dict]:
@@ -44,27 +45,25 @@ class BingXExchange:
 
 			formatted_book = {"asks": [], "bids": []}
 
-			# 🎯 ЮВЕЛИРНЫЙ ПАРСИНГ АСКОВ (Цены продажи)
+			# ЮВЕЛИРНЫЙ ПАРСИНГ АСКОВ (Цены продажи)
 			if raw_asks and isinstance(raw_asks, list):
 				for ask in raw_asks[:limit]:
 					if isinstance(ask, list) and len(ask) >= 2:
 						try:
 							price = float(ask[0])
 							amount = float(ask[1])
-							# 🛠 Обертываем в подмассив [цена, объем], как просит анализатор asks_a[0]
 							formatted_book["asks"].append([price, amount])
 							break
 						except (ValueError, TypeError):
 							continue
 
-			# 🎯 ЮВЕЛИРНЫЙ ПАРСИНГ БИДОВ (Цены покупки)
+			# ЮВЕЛИРНЫЙ ПАРСИНГ БИДОВ (Цены покупки)
 			if raw_bids and isinstance(raw_bids, list):
 				for bid in raw_bids[:limit]:
 					if isinstance(bid, list) and len(bid) >= 2:
 						try:
 							price = float(bid[0])
 							amount = float(bid[1])
-							# 🛠 Обертываем в [цена, объем]
 							formatted_book["bids"].append([price, amount])
 							break
 						except (ValueError, TypeError):
