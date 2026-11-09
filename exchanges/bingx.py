@@ -14,13 +14,13 @@ class BingXExchange:
 		self.api_secret = api_secret
 
 	async def init_exchange(self):
-		"""Штатная初始化 шлюза BingX"""
+		"""Штатная инициализация шлюза BingX"""
 		return True
 
 	async def fetch_order_book(self, symbol: str, limit: int = 5) -> Optional[dict]:
 		"""
 		Безопасно запрашивает и ювелирно парсит стакан ордеров BingX.
-		Возвращает правильную списочную структуру для совместимости с анализатором.
+		Возвращает правильную вложенную структуру массивов для совместимости с анализатором.
 		"""
 		bingx_symbol = symbol.replace("/", "-")
 		url = f"{self.base_url}/openApi/spot/v1/market/depth"
@@ -49,9 +49,10 @@ class BingXExchange:
 				for ask in raw_asks[:limit]:
 					if isinstance(ask, list) and len(ask) >= 2:
 						try:
-							# 🛠 Обертываем в [число], чтобы анализатор прочитал ask[0]
 							price = float(ask[0])
-							formatted_book["asks"].append(price)
+							amount = float(ask[1])
+							# 🛠 Обертываем в подмассив [цена, объем], как просит анализатор asks_a[0]
+							formatted_book["asks"].append([price, amount])
 							break
 						except (ValueError, TypeError):
 							continue
@@ -61,9 +62,10 @@ class BingXExchange:
 				for bid in raw_bids[:limit]:
 					if isinstance(bid, list) and len(bid) >= 2:
 						try:
-							# 🛠 Обертываем в [число], чтобы анализатор прочитал bid[0]
 							price = float(bid[0])
-							formatted_book["bids"].append(price)
+							amount = float(bid[1])
+							# 🛠 Обертываем в [цена, объем]
+							formatted_book["bids"].append([price, amount])
 							break
 						except (ValueError, TypeError):
 							continue
