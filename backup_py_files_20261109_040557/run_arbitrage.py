@@ -2,6 +2,7 @@ import os
 import sys
 import asyncio
 import logging
+import json
 
 # Подтягиваем менеджер
 from core.arbitrage_manager import ArbitrageManager
