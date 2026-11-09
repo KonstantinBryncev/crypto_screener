@@ -36,7 +36,7 @@ class ArbitrageManager:
 		self.min_spread = arb_config.get("min_spread_percent", -1.0)
 		self.max_spread = arb_config.get("max_spread_percent", 50.0)
 		self.trade_fee = arb_config.get("trade_fee_percent", 0.1)
-		self.min_volume_24h = arb_config.get("min_volume_24h_usdt", 50000.0) # Наш новый фильтр объёма
+		self.min_volume_24h = arb_config.get("min_volume_24h_usdt", 50000.0)
 		
 		# Берем синглтон HTTP-клиента с Reality-туннелем
 		self.network_client = AsyncHttpClient()
@@ -88,11 +88,10 @@ class ArbitrageManager:
 		
 		print(f"🔄 [МЕНЕДЖЕР] Собираем пары к USDT с суточным объемом торгов выше ${self.min_volume_24h:,}...")
 		
-		# Меняем эндпоинты Bybit и OKX на тикеры, так как в них сразу отдается суточный объем торгов монеты
 		exchanges_endpoints = {
 			"bybit": "/v5/market/tickers?category=spot",
 			"okx": "/api/v5/market/tickers?instType=SPOT",
-			"bingx": "/openApi/spot/v1/market/getTicker",
+			"bingx": "/openApi/spot/v1/common/symbols",
 			"gate": "/api/v4/spot/tickers",
 			"kucoin": "/api/v1/market/allTickers"
 		}
@@ -105,7 +104,7 @@ class ArbitrageManager:
 				continue
 			try:
 				base_url = self.hosts[host_key].rstrip("/")
-				url = f"{base_url}{endpoint}" if exchange == "gate" else f"{base_url}{endpoint}"
+				url = f"{base_url}{endpoint}"
 				
 				data = await self.network_client.fetch_json(url, method="GET")
 				if not data:
@@ -129,17 +128,16 @@ class ArbitrageManager:
 						if inst_id.endswith("-USDT"):
 							vol = float(item.get("volCcy24h", 0))
 							if vol >= self.min_volume_24h:
+								# 🛠 ТВОЙ РОДНОЙ ИСПРАВЛЕННЫЙ ИНДЕКС СЛИТА НА МЕСТЕ
 								base = inst_id.split("-")[0]
 								ex_pairs.add(f"{base}/USDT")
 								
 				elif exchange == "bingx":
-					for item in data.get("data", []):
-						symbol = item.get("symbol", "")
-						if symbol.endswith("-USDT"):
-							vol = float(item.get("volume", 0))
-							if vol >= self.min_volume_24h:
-								base = symbol.split("-")[0]
-								ex_pairs.add(f"{base}/USDT")
+					symbols_list = data.get("data", {}).get("symbols", [])
+					for item in symbols_list:
+						if item.get("quoteAsset") == "USDT" and item.get("status") == 1:
+							base = item.get("baseAsset")
+							ex_pairs.add(f"{base}/USDT")
 								
 				elif exchange == "gate":
 					if isinstance(data, list):
