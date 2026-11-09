@@ -49,24 +49,14 @@
 		}
 	},
 
-	"arbitrage": {
-		"_comment_timings": "=== НАСТРОЙКИ ТАЙМИНГОВ И СКОРОСТИ СКАНИРОВАНИЯ ===",
-		"loop_delay_seconds": 1.0,
-		"scan_delay_seconds": 4.0,
-		"anti_ban_delay_seconds": 1.0,
-		"snapshot_interval_minutes": 10.0,
-
-		"_comment_filters": "=== НАСТРОЙКИ ФИЛЬТРАЦИИ СИГНАЛОВ И ВЫВОДА В КОНСОЛЬ ===",
-		"min_spread_percent": 1.0,
-		"max_spread_percent": 50.0,
-		"trade_fee_percent": 0.1,
-		"min_volume_usdt": 1.0,
-		"enable_telegram_alerts": true,
-
-		"_comment_economy": "=== НАСТРОЙКИ ЭКОНОМИКИ И ТЕСТОВОГО БАЛАНСА ===",
-		"base_order_usdt": 500.0,
-		"symbols": ["BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT", "ADA/USDT"]
-	},
+	  "arbitrage": {
+        "scan_delay_seconds": 4.0,
+        "base_order_usdt": 500.0,
+        "min_spread_percent": 1.0,
+        "max_spread_percent": 15.0,
+        "trade_fee_percent": 0.1,
+        "min_volume_24h_usdt": 50000.0
+    },
 
 	"telegram": {
 		"bot_token": "ТВОЙ_ТОКЕН_БОТА",
