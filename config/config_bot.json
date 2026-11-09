@@ -78,6 +78,13 @@
 	"telegram": {
 		"bot_token": "ТВОЙ_ТОКЕН_БОТА",
 		"chat_id": "ТВОЙ_ЧАТ_ИД"
-	}
+	},
+	
+    "network": {
+        "vless_link": "vless://8df80b42-8811-4ad3-a9c0-3b40f8e23c63@92.118.168.39:2185?authority=&encryption=mlkem768x25519plus.native.0rtt.ybtxiGd0D2J4URw5qfaYQtxQ8apR63e9sljLQxk3yEU&flow=xtls-rprx-vision&fp=chrome&pbk=rGx4PMUKoEDKoeMK_-ZTwfQs1Y-5wXgnQdULndofdg8&security=reality&serviceName=&sid=2b403f2d2b&sni=sony-europe.com&spx=%2Feeba8408296bc2e&support-x25519mlkem768=true&type=grpc#neuroreality-Kirpich%40Notebook.com",
+        "local_socks_port": 52115,
+        "xray_bin_path": "bin/xray",
+        "config_output_path": "config.json"
+    }
 }
 
