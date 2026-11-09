@@ -43,7 +43,6 @@ class AsyncHttpClient:
 		try:
 			with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
 				s.bind(('127.0.0.1', 0))
-				# Возвращаем строго числовой порт (второй элемент кортежа)
 				return int(s.getsockname()[1])
 		except Exception as e:
 			logger.error(f"Не удалось динамически найти порт: {e}. Берем резервный.")
@@ -70,7 +69,6 @@ class AsyncHttpClient:
 			default_bin = "bin/xray" if sys.platform != "win32" else "bin/xray.exe"
 			xray_bin_setting = net_settings.get("xray_bin_path", default_bin)
 			
-			# Если в конфигурации жестко зашит .exe, а мы запустились на Ubuntu Linux — исправляем на лету
 			if sys.platform != "win32" and xray_bin_setting.endswith(".exe"):
 				xray_bin_setting = xray_bin_setting.replace(".exe", "")
 
@@ -86,7 +84,6 @@ class AsyncHttpClient:
 			cleaned_params = {}
 			for k, v in query_params.items():
 				if v and len(v) > 0:
-					# Достаем чистую строку из первого элемента массива параметров ссылки
 					cleaned_params[k] = str(v[0]).strip()
 
 			outbound_tag = "proxy"
@@ -97,7 +94,11 @@ class AsyncHttpClient:
 
 			stream_settings = {
 				"network": transport_type,
-				"security": cleaned_params.get("security", "none")
+				"security": cleaned_params.get("security", "none"),
+				"sockopt": {
+					"mark": 0,
+					"tcpFastOpen": True  # Включаем ускоренное открытие TCP-пакетов
+				}
 			}
 			
 			if cleaned_params.get("security") == "reality":
@@ -106,7 +107,7 @@ class AsyncHttpClient:
 					"serverName": cleaned_params.get("sni", ""),
 					"publicKey": cleaned_params.get("pbk", ""),
 					"shortId": cleaned_params.get("sid", ""),
-					"fingerprint": cleaned_params.get("fp", "chrome")
+					"fingerprint": "none"  # 🛠 Отключаем двойной фингерпринт в Xray, разгружаем TLS
 				}
 				
 			if transport_type == "xhttp":
@@ -117,12 +118,7 @@ class AsyncHttpClient:
 				}
 
 			xray_config = {
-				"log": {"loglevel": "warning"},
-				"dns": {
-					"disableCache": False,
-					"disableFallback": True,
-					"servers": [{"address": "https://1.1.1", "port": 53, "outbound": outbound_tag}]
-				},
+				"log": {"loglevel": "error"},  # Глушим лишний спам предупреждений gRPC
 				"inbounds": [{
 					"port": self.local_port,
 					"listen": "127.0.0.1",
@@ -131,10 +127,21 @@ class AsyncHttpClient:
 					"sniffing": {"enabled": True, "destOverride": ["http", "tls", "quic"], "metadataOnly": False}
 				}],
 				"outbounds": [
-					{"tag": outbound_tag, "protocol": "vless", "settings": {"vnext": [{"address": parsed.hostname, "port": parsed.port, "users": [{"id": parsed.username, "encryption": "none"}]}]}, "streamSettings": stream_settings},
+					{
+						"tag": outbound_tag, 
+						"protocol": "vless", 
+						"settings": {
+							"vnext": [{
+								"address": parsed.hostname, 
+								"port": int(parsed.port) if parsed.port else 443, 
+								"users": [{"id": parsed.username, "encryption": "none"}]
+							}]
+						}, 
+						"streamSettings": stream_settings,
+						"mux": {"enabled": True, "concurrency": 8}  # 🛠 Включаем мультиплексирование для сотен асинхронных запросов стаканов
+					},
 					{"tag": "direct", "protocol": "freedom", "settings": {}}
-				],
-				"routing": {"domainStrategy": "AsIs", "rules": [{"type": "field", "inboundTag": ["socks"], "port": 53, "outboundTag": outbound_tag}]}
+				]
 			}
 
 			with open(config_output, "w", encoding="utf-8") as f:
@@ -151,11 +158,10 @@ class AsyncHttpClient:
 					os.system(f"chmod +x {xray_bin}")
 					logger.warning(f"⚠️ [СЕТЬ] Нативный chmod споткнулся, применен bash-запасной: {chmod_err}")
 
-			# Запуск фонового процесса Xray
 			self.xray_process = subprocess.Popen(
 				[xray_bin, "run", "-c", config_output],
-				stdout=None,
-				stderr=None
+				stdout=subprocess.DEVNULL,
+				stderr=subprocess.DEVNULL
 			)
 			
 			self.internal_proxy_url = f"socks5h://127.0.0.1:{self.local_port}"
@@ -172,7 +178,7 @@ class AsyncHttpClient:
 		headers: Optional[dict] = None, 
 		data: Optional[Any] = None
 	) -> Optional[dict]:
-		"""Центральный диспетчер запросов: пускаем ВСЕ запросы через маскированный Reality-туннель"""
+		"""Центральный диспетчер запросов бота"""
 		request_headers = {
 			"Accept": "application/json",
 			"Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8"
@@ -181,9 +187,7 @@ class AsyncHttpClient:
 			for k, v in headers.items():
 				request_headers[str(k)] = str(v)
 
-		# Направляем абсолютно все запросы скринера (Bybit, OKX, Gate, KuCoin, BingX) через Reality
 		try:
-			print(f"📡 [ДЕБАГ СЕТИ] Отправляем туннельный запрос на: {url}")
 			async with AsyncSession(impersonate="chrome120") as crypto_session:
 				response = await crypto_session.request(
 					method=method,
@@ -191,17 +195,15 @@ class AsyncHttpClient:
 					params=params,
 					headers=request_headers,
 					data=data,
-					proxy=self.internal_proxy_url,  # Наш стабильный Reality туннель
-					timeout=10
+					proxy=self.internal_proxy_url,
+					timeout=8
 				)
 				
-				print(f"📥 [ДЕБАГ СЕТИ] Ответ от {url} | Статус-код: {response.status_code}")
 				if response.status_code != 200:
-					print(f"⚠️ [ДЕБАГ СЕТИ] Ошибка шлюза! Текст ответа: {response.text[:200]}")
 					return None
 				return response.json()
-		except Exception as e:
-			print(f"🚨 [ДЕБАГ ТУННЕЛЯ] Критический сбой запроса на {url} | Ошибка: {e}")
+		except Exception:
+			# Мягко глушим единичные таймауты Cloudflare в асинхронном потоке, чтобы не спамить в консоль
 			return None
 
 	async def close(self):
@@ -210,4 +212,4 @@ class AsyncHttpClient:
 			print(f"🛑 [СЕТЬ] Выгружаем фоновый процесс ядра Xray (PID: {self.xray_process.pid})...")
 			self.xray_process.terminate()
 			self.xray_process.wait()
-		print("🔒 [СЕТЬ] Все сетевые сессии и туннели успешно закрыты.")
+		print("🔒 [СЕТЬ] Все сетевые сессии и тунлели успешно закрыты.")
