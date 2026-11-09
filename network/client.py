@@ -43,7 +43,7 @@ class AsyncHttpClient:
 		try:
 			with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
 				s.bind(('127.0.0.1', 0))
-				return s.getsockname()[1]
+				return s.getsockname()
 		except Exception as e:
 			logger.error(f"Не удалось динамически найти порт: {e}. Берем резервный.")
 			return 10808
@@ -82,15 +82,20 @@ class AsyncHttpClient:
 			parsed = urlparse(vless_link)
 			query_params = parse_qs(parsed.query)
 			
-			# 🛠 ИСПРАВЛЕНИЕ: Достаем чистую одиночную строку из первого элемента массива параметров
 			cleaned_params = {}
 			for k, v in query_params.items():
 				if v and len(v) > 0:
 					cleaned_params[k] = str(v[0])
 
 			outbound_tag = "proxy"
+			
+			# 🛠 ХАК ДЛЯ СОВМЕСТИМОСТИ XRAY 26+: Автоматически мигрируем устаревший grpc на xhttp
+			transport_type = cleaned_params.get("type", "tcp")
+			if transport_type == "grpc":
+				transport_type = "xhttp"
+
 			stream_settings = {
-				"network": cleaned_params.get("type", "tcp"),
+				"network": transport_type,
 				"security": cleaned_params.get("security", "none")
 			}
 			
@@ -103,8 +108,13 @@ class AsyncHttpClient:
 					"fingerprint": cleaned_params.get("fp", "chrome")
 				}
 				
-			if cleaned_params.get("type") == "grpc":
-				stream_settings["grpcSettings"] = {"serviceName": cleaned_params.get("serviceName", "")}
+			# Настройка конфигурации под XHTTP (заменяет устаревший grpc)
+			if transport_type == "xhttp":
+				stream_settings["xhttpSettings"] = {
+					"mode": "stream-up",
+					"host": cleaned_params.get("sni", ""),
+					"path": "/" + cleaned_params.get("serviceName", "")
+				}
 
 			xray_config = {
 				"log": {"loglevel": "warning"},
@@ -141,7 +151,7 @@ class AsyncHttpClient:
 					os.system(f"chmod +x {xray_bin}")
 					logger.warning(f"⚠️ [СЕТЬ] Нативный chmod споткнулся, применен bash-запасной: {chmod_err}")
 
-			# Запуск процесса Xray с логированием
+			# Запуск процесса Xray
 			self.xray_process = subprocess.Popen(
 				[xray_bin, "run", "-c", config_output],
 				stdout=None,
@@ -183,7 +193,7 @@ class AsyncHttpClient:
 		headers: Optional[dict] = None, 
 		data: Optional[Any] = None
 	) -> Optional[dict]:
-		"""Центральный диспетчер запросов бота с детальным выводом логирования на части"""
+		"""Центральный диспетчер запросов бота"""
 		request_headers = {
 			"Accept": "application/json",
 			"Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8"
