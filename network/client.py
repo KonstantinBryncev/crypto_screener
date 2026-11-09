@@ -19,7 +19,7 @@ class AsyncHttpClient:
 	"""
 	Оптимизированный HTTP-клиент (Singleton).
 	Интегрирует ядро Xray, динамически подбирает порты и полностью
-	маскирует запросы к Gate.io, OKX и KuCoin под Chrome через Reality-туннель.
+	маскирует запросы ко всем биржам под Chrome через Reality-туннель.
 	"""
 	_instance = None
 
@@ -39,11 +39,11 @@ class AsyncHttpClient:
 		return cls._instance
 
 	def _find_free_port(self) -> int:
-		"""Динамический поиск свободного порта в системе (возвращает только число)"""
+		"""Динамический поиск свободного порта в системе"""
 		try:
 			with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
 				s.bind(('127.0.0.1', 0))
-				# 🎯 ИСПРАВЛЕНИЕ: Берем строго второй элемент [1] (числовой порт), а не весь кортеж
+				# Возвращаем строго числовой порт (второй элемент кортежа)
 				return int(s.getsockname()[1])
 		except Exception as e:
 			logger.error(f"Не удалось динамически найти порт: {e}. Берем резервный.")
@@ -86,7 +86,7 @@ class AsyncHttpClient:
 			cleaned_params = {}
 			for k, v in query_params.items():
 				if v and len(v) > 0:
-					# 🛠 Чистим строки от мусора, скобок и кавычек
+					# Достаем чистую строку из первого элемента массива параметров ссылки
 					cleaned_params[k] = str(v[0]).strip()
 
 			outbound_tag = "proxy"
@@ -151,7 +151,7 @@ class AsyncHttpClient:
 					os.system(f"chmod +x {xray_bin}")
 					logger.warning(f"⚠️ [СЕТЬ] Нативный chmod споткнулся, применен bash-запасной: {chmod_err}")
 
-			# Запуск процесса Xray
+			# Запуск фонового процесса Xray
 			self.xray_process = subprocess.Popen(
 				[xray_bin, "run", "-c", config_output],
 				stdout=None,
@@ -164,27 +164,6 @@ class AsyncHttpClient:
 		except Exception as e:
 			print(f"🚨 [СЕТЬ] Ошибка автозапуска ядра Xray: {e}")
 
-	async def get_session(self) -> aiohttp.ClientSession:
-		"""Легкая общая асинхронная сессия для Bybit/BingX"""
-		if self.session is None or self.session.closed:
-			timeout = aiohttp.ClientTimeout(total=10, connect=4)
-			headers = {
-				"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-				"Accept": "application/json"
-			}
-			
-			if self.internal_proxy_url:
-				try:
-					from aiohttp_socks import ProxyConnector
-					connector = ProxyConnector.from_url(self.internal_proxy_url)
-					self.session = aiohttp.ClientSession(timeout=timeout, headers=headers, connector=connector)
-				except ImportError:
-					self.session = aiohttp.ClientSession(timeout=timeout, headers=headers)
-			else:
-				self.session = aiohttp.ClientSession(timeout=timeout, headers=headers)
-				
-		return self.session
-
 	async def fetch_json(
 		self, 
 		url: str, 
@@ -193,7 +172,7 @@ class AsyncHttpClient:
 		headers: Optional[dict] = None, 
 		data: Optional[Any] = None
 	) -> Optional[dict]:
-		"""Центральный диспетчер запросов бота"""
+		"""Центральный диспетчер запросов: пускаем ВСЕ запросы через маскированный Reality-туннель"""
 		request_headers = {
 			"Accept": "application/json",
 			"Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8"
@@ -202,57 +181,31 @@ class AsyncHttpClient:
 			for k, v in headers.items():
 				request_headers[str(k)] = str(v)
 
-		# =========================================================================
-		# ТОЧЕЧНЫЙ ПЕРЕХВАТ ПЛАТФОРМ (ПРОБИВАЕМ РКН И КЛАУДФЛЕЕР ЧЕРЕЗ REALITY)
-		# =========================================================================
-		target_domains = ["gateio", "gate.io", "okx", "kucoin", "telegram.org"]
-		if any(domain in url for domain in target_domains):
-			try:
-				print(f"📡 [ДЕБАГ СЕТИ] Отправляем туннельный запрос на: {url}")
-				async with AsyncSession(impersonate="chrome120") as crypto_session:
-					response = await crypto_session.request(
-						method=method,
-						url=url,
-						params=params,
-						headers=request_headers,
-						data=data,
-						proxy=self.internal_proxy_url,  # Наш зашифрованный туннель
-						timeout=8
-					)
-					
-					print(f"📥 [ДЕБАГ СЕТИ] Ответ от {url} | Статус-код: {response.status_code}")
-					if response.status_code != 200:
-						print(f"⚠️ [ДЕБАГ СЕТИ] Ошибка шлюза! Текст ответа: {response.text[:200]}")
-						return None
-					return response.json()
-			except Exception as e:
-				print(f"🚨 [ДЕБАГ ТУННЕЛЯ] Критический сбой запроса на {url} | Ошибка: {e}")
-				return None
-
-		# =========================================================================
-		# СТАНДАРТНЫЙ ПУТЬ ДЛЯ ОСТАЛЬНЫХ БИРЖ (BYBIT, BINGX)
-		# =========================================================================
-		session = await self.get_session()
+		# Направляем абсолютно все запросы скринера (Bybit, OKX, Gate, KuCoin, BingX) через Reality
 		try:
-			async with session.request(
-				method=method,
-				url=url,
-				params=params,
-				headers=request_headers,
-				data=data,
-				timeout=aiohttp.ClientTimeout(total=6)
-			) as response:
-				if response.status != 200:
+			print(f"📡 [ДЕБАГ СЕТИ] Отправляем туннельный запрос на: {url}")
+			async with AsyncSession(impersonate="chrome120") as crypto_session:
+				response = await crypto_session.request(
+					method=method,
+					url=url,
+					params=params,
+					headers=request_headers,
+					data=data,
+					proxy=self.internal_proxy_url,  # Наш стабильный Reality туннель
+					timeout=10
+				)
+				
+				print(f"📥 [ДЕБАГ СЕТИ] Ответ от {url} | Статус-код: {response.status_code}")
+				if response.status_code != 200:
+					print(f"⚠️ [ДЕБАГ СЕТИ] Ошибка шлюза! Текст ответа: {response.text[:200]}")
 					return None
-				return await response.json()
+				return response.json()
 		except Exception as e:
-			logger.error(f"🚨 [СЕТЬ ОШИБКА] Сбой запроса к {url}: {e}")
+			print(f"🚨 [ДЕБАГ ТУННЕЛЯ] Критический сбой запроса на {url} | Ошибка: {e}")
 			return None
 
 	async def close(self):
 		"""Безопасная остановка сессий и выгрузка xray из памяти ОС"""
-		if self.session and not self.session.closed:
-			await self.session.close()
 		if self.xray_process:
 			print(f"🛑 [СЕТЬ] Выгружаем фоновый процесс ядра Xray (PID: {self.xray_process.pid})...")
 			self.xray_process.terminate()
