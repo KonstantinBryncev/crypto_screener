@@ -82,7 +82,7 @@ class AsyncHttpClient:
 			parsed = urlparse(vless_link)
 			query_params = parse_qs(parsed.query)
 			
-			# 🛠 ИСПРАВЛЕНИЕ: Достаем чистую строку из первого элемента массива параметров
+			# 🛠 ИСПРАВЛЕНИЕ: Достаем чистую одиночную строку из первого элемента массива параметров
 			cleaned_params = {}
 			for k, v in query_params.items():
 				if v and len(v) > 0:
@@ -141,7 +141,7 @@ class AsyncHttpClient:
 					os.system(f"chmod +x {xray_bin}")
 					logger.warning(f"⚠️ [СЕТЬ] Нативный chmod споткнулся, применен bash-запасной: {chmod_err}")
 
-			# Запуск процесса Xray
+			# Запуск процесса Xray с логированием
 			self.xray_process = subprocess.Popen(
 				[xray_bin, "run", "-c", config_output],
 				stdout=None,
