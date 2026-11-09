@@ -13,8 +13,7 @@ CREATE TABLE possible_trades (
     sell_exchange TEXT,
     buy_price NUMERIC,
     sell_price NUMERIC,
-    spread_pct NUMERIC,
-    volume_24h NUMERIC
+    spread_pct NUMERIC
 );
 """
 

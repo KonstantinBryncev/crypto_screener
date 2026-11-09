@@ -129,6 +129,16 @@ class AsyncHttpClient:
 				print(f"❌ [СЕТЬ] Исполняемый файл ядра Xray отсутствует по пути: {xray_bin}")
 				return
 
+			# =========================================================================
+			# АВТО-ВЫДАЧА ПРАВ НА ИСПОЛНЕНИЕ (+x) ДЛЯ LINUX/UBUNTU СЕРВЕРА
+			# =========================================================================
+			if sys.platform != "win32":
+				try:
+					os.chmod(xray_bin, 0o755)
+				except Exception as chmod_err:
+					os.system(f"chmod +x {xray_bin}")
+					logger.warning(f"⚠️ [СЕТЬ] Нативный chmod споткнулся, применен bash-запасной: {chmod_err}")
+
 			self.xray_process = subprocess.Popen(
 				[xray_bin, "run", "-c", config_output],
 				stdout=subprocess.DEVNULL,
