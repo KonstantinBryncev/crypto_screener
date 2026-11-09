@@ -91,7 +91,12 @@ class ArbitrageManager:
 
 	async def load_all_usdt_pairs(self):
 		"""Автоматический сбор абсолютно всех доступных пар к USDT со всех работающих шлюзов"""
+		# Даем ядру Xray 3 секунды на установку стабильного Reality-соединения
+		await asyncio.sleep(3.0)
+		
 		print("🔄 [МЕНЕДЖЕР] Собираем список доступных монет к USDT через Reality-туннели...")
+		# ... дальше весь твой остальной код метода без изменений ...
+
 		
 		exchanges_endpoints = {
 			"bybit": "/v5/market/instruments-info?category=spot",
