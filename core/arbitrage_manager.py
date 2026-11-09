@@ -24,7 +24,7 @@ logger = logging.getLogger("ArbitrageManager")
 class ArbitrageManager:
 	"""
 	Ядро управления скринером. Автоматически собирает общие пары к USDT,
-	координирует асинхронный сбор стаканов и запускает анализ.
+	координирует асинхронный сбор стаканов с фильтрацией суточных объемов и запускает анализ.
 	"""
 	def __init__(self, config: dict):
 		self.config = config
@@ -51,11 +51,12 @@ class ArbitrageManager:
 			network_client=self.network_client
 		)
 		
-		# Инициализируем анализатор
-		self.analyzer = ArbitrageAnalyzer()
+		# Инициализируем анализатор с передачей конфига для динамического DSN PostgreSQL
+		self.analyzer = ArbitrageAnalyzer(config)
 		self.analyzer.set_notifier(self.tg_notifier)
 		
 		self.monitored_symbols = []
+		self.symbols_volumes = {}  # 🎯 Оперативный кэш суточных объемов торгов для записи в БД
 		self.exchanges = {}
 
 	def _init_exchange_connectors(self):
@@ -88,7 +89,6 @@ class ArbitrageManager:
 		
 		print(f"🔄 [МЕНЕДЖЕР] Собираем пары к USDT с суточным объемом торгов выше ${self.min_volume_24h:,}...")
 		
-		# 🛠 ПЕРЕКЛЮЧИЛИ BINGX НА ЖЕЛЕЗНЫЙ МАРКЕТ-ЭНДПОИНТ ТИКЕРОВ
 		exchanges_endpoints = {
 			"bybit": "/v5/market/tickers?category=spot",
 			"okx": "/api/v5/market/tickers?instType=SPOT",
@@ -98,6 +98,7 @@ class ArbitrageManager:
 		}
 		
 		all_sets = []
+		temp_volumes = {}  # Временный локальный агрегатор объемов
 		
 		for exchange, endpoint in exchanges_endpoints.items():
 			host_key = f"{exchange}_base_url"
@@ -121,7 +122,9 @@ class ArbitrageManager:
 							vol = float(item.get("volume24h", 0)) * float(item.get("lastPrice", 0))
 							if vol >= self.min_volume_24h:
 								base = symbol.replace("USDT", "")
-								ex_pairs.add(f"{base}/USDT")
+								pair_name = f"{base}/USDT"
+								ex_pairs.add(pair_name)
+								temp_volumes.setdefault(pair_name, []).append(vol)
 								
 				elif exchange == "okx":
 					for item in data.get("data", []):
@@ -130,10 +133,11 @@ class ArbitrageManager:
 							vol = float(item.get("volCcy24h", 0))
 							if vol >= self.min_volume_24h:
 								base = inst_id.split("-")[0]
-								ex_pairs.add(f"{base}/USDT")
+								pair_name = f"{base}/USDT"
+								ex_pairs.add(pair_name)
+								temp_volumes.setdefault(pair_name, []).append(vol)
 								
 				elif exchange == "bingx":
-					# 🛠 НАДЕЖНЫЙ ПАРСИНГ ЖИВЫХ ТИКЕРОВ BINGX С ФИЛЬТРАЦИЕЙ ОБЪЕМА
 					tickers_list = data.get("data", [])
 					if isinstance(tickers_list, list):
 						for item in tickers_list:
@@ -142,17 +146,22 @@ class ArbitrageManager:
 								vol = float(item.get("volume", 0))
 								if vol >= self.min_volume_24h:
 									base = symbol.split("-")[0]
-									ex_pairs.add(f"{base}/USDT")
+									pair_name = f"{base}/USDT"
+									ex_pairs.add(pair_name)
+									temp_volumes.setdefault(pair_name, []).append(vol)
 								
 				elif exchange == "gate":
 					if isinstance(data, list):
 						for item in data:
 							currency_pair = item.get("currency_pair", "")
 							if currency_pair.endswith("_USDT"):
-								vol = float(item.get("quote_volume", 0))
+								# 🛠 ЖЕЛЕЗНЫЙ ЗАПАСНОЙ ПАРСИНГ: Избегаем пустых полей в quote_volume
+								vol = float(item.get("quote_volume", 0) or 0)
 								if vol >= self.min_volume_24h:
 									base = currency_pair.split("_")[0]
-									ex_pairs.add(f"{base}/USDT")
+									pair_name = f"{base}/USDT"
+									ex_pairs.add(pair_name)
+									temp_volumes.setdefault(pair_name, []).append(vol)
 									
 				elif exchange == "kucoin":
 					for item in data.get("data", {}).get("ticker", []):
@@ -161,7 +170,9 @@ class ArbitrageManager:
 							vol = float(item.get("volValue", 0))
 							if vol >= self.min_volume_24h:
 								base = symbol.split("-")[0]
-								ex_pairs.add(f"{base}/USDT")
+								pair_name = f"{base}/USDT"
+								ex_pairs.add(pair_name)
+								temp_volumes.setdefault(pair_name, []).append(vol)
 				
 				if ex_pairs:
 					all_sets.append(ex_pairs)
@@ -173,16 +184,24 @@ class ArbitrageManager:
 		if all_sets:
 			all_discovered = set.union(*all_sets)
 			valid_pairs = []
+			self.symbols_volumes.clear()
+			
 			for pair in all_discovered:
 				count = sum(1 for s in all_sets if pair in s)
+				# 🎯 Пара валидна, если пересекается как минимум на 2 биржах с хорошим объемом
 				if count >= 2:
 					valid_pairs.append(pair)
+					# Рассчитываем средний суточный объем по биржам для объективности
+					vols = temp_volumes.get(pair, [self.min_volume_24h])
+					self.symbols_volumes[pair] = sum(vols) / len(vols)
 					
 			self.monitored_symbols = sorted(valid_pairs)
 			print(f"✅ [МЕНЕДЖЕР] Итог: К динамическому ликвидному радару готово {len(self.monitored_symbols)} пар к USDT!")
 		else:
 			print("🚨 [КРИТИЧЕСКАЯ ОШИБКА СЕТИ]: Не удалось собрать общие пары. Откат на базовые маркеры.")
 			self.monitored_symbols = ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
+			for p in self.monitored_symbols:
+				self.symbols_volumes[p] = 50000000.0
 
 	async def start(self):
 		"""Главный бесконечный цикл асинхронного сканирования рынков"""
@@ -220,21 +239,33 @@ class ArbitrageManager:
 		orderbooks = {}
 		tasks = {exch_id: exch_obj.fetch_order_book(symbol, limit=5) for exch_id, exch_obj in self.exchanges.items()}
 		
+		# Конкурентно собираем стаканы со всех доступных бирж
 		results = await asyncio.gather(*tasks.values(), return_exceptions=True)
 		for exch_id, orderbook in zip(tasks.keys(), results):
 			if orderbook and not isinstance(orderbook, Exception) and (orderbook.get("asks") or orderbook.get("bids")):
 				orderbooks[exch_id] = orderbook
 				
+		# Если стаканы получены минимум от 2 бирж, запускаем кросс-биржевой перебор пар
 		if len(orderbooks) >= 2:
 			exch_names = list(orderbooks.keys())
+			pair_volume = self.symbols_volumes.get(symbol, 0.0)  # Достаем кэшированный суточный объем
+			
 			for i in range(len(exch_names)):
 				for j in range(i + 1, len(exch_names)):
 					ex_a, ex_b = exch_names[i], exch_names[j]
-					self.analyzer.calculate_spot_spread(
-						symbol=symbol, exchange_a_name=ex_a, orderbook_a=orderbooks[ex_a],
-						exchange_b_name=ex_b, orderbook_b=orderbooks[ex_b],
-						base_volume=self.base_volume, min_spread_pct=self.min_spread,
-						max_spread_pct=self.max_spread, trade_fee_pct=self.trade_fee
+					
+					# 🔥 Внедрен обязательный await для асинхронного анализатора спреда
+					await self.analyzer.calculate_spot_spread(
+						symbol=symbol, 
+						exchange_a_name=ex_a, 
+						orderbook_a=orderbooks[ex_a],
+						exchange_b_name=ex_b, 
+						orderbook_b=orderbooks[ex_b],
+						volume_24h=pair_volume,  # Передаем боевой объем монеты в анализатор и БД
+						base_volume=self.base_volume, 
+						min_spread_pct=self.min_spread,
+						max_spread_pct=self.max_spread, 
+						trade_fee_pct=self.trade_fee
 					)
 
 	async def stop(self):

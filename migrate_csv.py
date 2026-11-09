@@ -13,8 +13,10 @@ CREATE TABLE possible_trades (
     sell_exchange TEXT,
     buy_price NUMERIC,
     sell_price NUMERIC,
-    spread_pct NUMERIC
+    spread_pct NUMERIC,
+    volume_24h NUMERIC  -- 🔥 Вернули боевую колонку для объемов
 );
+
 """
 
 def load_config():

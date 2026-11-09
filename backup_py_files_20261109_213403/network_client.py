@@ -19,7 +19,7 @@ class AsyncHttpClient:
 	"""
 	Оптимизированный HTTP-клиент (Singleton).
 	Интегрирует ядро Xray, динамически подбирает порты и полностью
-	маскирует запросы к Gate.io, OKX и KuCoin под Chrome через Reality-туннель.
+	маскирует запросы ко всем биржам под Chrome через Reality-туннель.
 	"""
 	_instance = None
 
@@ -43,7 +43,7 @@ class AsyncHttpClient:
 		try:
 			with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
 				s.bind(('127.0.0.1', 0))
-				return s.getsockname()[1]
+				return int(s.getsockname()[1])
 		except Exception as e:
 			logger.error(f"Не удалось динамически найти порт: {e}. Берем резервный.")
 			return 10808
@@ -59,17 +59,16 @@ class AsyncHttpClient:
 				bot_config = json.load(f)
 			
 			net_settings = bot_config.get("network", {})
-			vless_link = net_settings.get("vless_link")
+			vless_link = net_settings.get("vless_link", "")
 			
-			if not vless_link or "ВАША_" in vless_link:
-				print("⚠️ [СЕТЬ] VLESS ссылка не настроена. Скринер работает в прямом сетевом режиме.")
+			# 🛠 ЖЕЛЕЗНЫЙ ФИЛЬТР: Отсекаем выключенный режим, пустые строки и заглушки
+			if not vless_link or any(x in vless_link.upper() for x in ["ВАША_", "ВЫКЛ", "OFF", "U0412"]):
+				print("⚠️ [СЕТЬ] VPN отключен в конфигурации. Скринер работает в прямом сетевом режиме.")
 				return
 
-			# 🐧 Автоматически определяем расширение бинарника в зависимости от ОС сервера
 			default_bin = "bin/xray" if sys.platform != "win32" else "bin/xray.exe"
 			xray_bin_setting = net_settings.get("xray_bin_path", default_bin)
 			
-			# Если в конфигурации жестко зашит .exe, а мы запустились на Ubuntu Linux — исправляем на лету
 			if sys.platform != "win32" and xray_bin_setting.endswith(".exe"):
 				xray_bin_setting = xray_bin_setting.replace(".exe", "")
 
@@ -81,12 +80,25 @@ class AsyncHttpClient:
 			
 			parsed = urlparse(vless_link)
 			query_params = parse_qs(parsed.query)
-			cleaned_params = {k: v[0] for k, v in query_params.items() if v}
+			
+			cleaned_params = {}
+			for k, v in query_params.items():
+				if v and len(v) > 0:
+					cleaned_params[k] = str(v).strip()
 
 			outbound_tag = "proxy"
+			
+			transport_type = cleaned_params.get("type", "tcp")
+			if transport_type == "grpc":
+				transport_type = "xhttp"
+
 			stream_settings = {
-				"network": cleaned_params.get("type", "tcp"),
-				"security": cleaned_params.get("security", "none")
+				"network": transport_type,
+				"security": cleaned_params.get("security", "none"),
+				"sockopt": {
+					"mark": 0,
+					"tcpFastOpen": True
+				}
 			}
 			
 			if cleaned_params.get("security") == "reality":
@@ -95,19 +107,18 @@ class AsyncHttpClient:
 					"serverName": cleaned_params.get("sni", ""),
 					"publicKey": cleaned_params.get("pbk", ""),
 					"shortId": cleaned_params.get("sid", ""),
-					"fingerprint": cleaned_params.get("fp", "chrome")
+					"fingerprint": "none"
 				}
 				
-			if cleaned_params.get("type") == "grpc":
-				stream_settings["grpcSettings"] = {"serviceName": cleaned_params.get("serviceName", "")}
+			if transport_type == "xhttp":
+				stream_settings["xhttpSettings"] = {
+					"mode": "stream-up",
+					"host": cleaned_params.get("sni", ""),
+					"path": "/" + cleaned_params.get("serviceName", "")
+				}
 
 			xray_config = {
-				"log": {"loglevel": "warning"},
-				"dns": {
-					"disableCache": False,
-					"disableFallback": True,
-					"servers": [{"address": "https://1.1.1", "port": 53, "outbound": outbound_tag}]
-				},
+				"log": {"loglevel": "error"},
 				"inbounds": [{
 					"port": self.local_port,
 					"listen": "127.0.0.1",
@@ -116,10 +127,21 @@ class AsyncHttpClient:
 					"sniffing": {"enabled": True, "destOverride": ["http", "tls", "quic"], "metadataOnly": False}
 				}],
 				"outbounds": [
-					{"tag": outbound_tag, "protocol": "vless", "settings": {"vnext": [{"address": parsed.hostname, "port": parsed.port, "users": [{"id": parsed.username, "encryption": "none"}]}]}, "streamSettings": stream_settings},
+					{
+						"tag": outbound_tag, 
+						"protocol": "vless", 
+						"settings": {
+							"vnext": [{
+								"address": parsed.hostname, 
+								"port": int(parsed.port) if parsed.port else 443, 
+								"users": [{"id": parsed.username, "encryption": "none"}]
+							}]
+						}, 
+						"streamSettings": stream_settings,
+						"mux": {"enabled": True, "concurrency": 8}
+					},
 					{"tag": "direct", "protocol": "freedom", "settings": {}}
-				],
-				"routing": {"domainStrategy": "AsIs", "rules": [{"type": "field", "inboundTag": ["socks"], "port": 53, "outboundTag": outbound_tag}]}
+				]
 			}
 
 			with open(config_output, "w", encoding="utf-8") as f:
@@ -128,6 +150,13 @@ class AsyncHttpClient:
 			if not os.path.exists(xray_bin):
 				print(f"❌ [СЕТЬ] Исполняемый файл ядра Xray отсутствует по пути: {xray_bin}")
 				return
+
+			if sys.platform != "win32":
+				try:
+					os.chmod(xray_bin, 0o755)
+				except Exception as chmod_err:
+					os.system(f"chmod +x {xray_bin}")
+					logger.warning(f"⚠️ [СЕТЬ] Нативный chmod споткнулся, применен bash-запасной: {chmod_err}")
 
 			self.xray_process = subprocess.Popen(
 				[xray_bin, "run", "-c", config_output],
@@ -140,27 +169,6 @@ class AsyncHttpClient:
 
 		except Exception as e:
 			print(f"🚨 [СЕТЬ] Ошибка автозапуска ядра Xray: {e}")
-
-	async def get_session(self) -> aiohttp.ClientSession:
-		"""Легкая общая асинхронная сессия для Bybit/BingX"""
-		if self.session is None or self.session.closed:
-			timeout = aiohttp.ClientTimeout(total=10, connect=4)
-			headers = {
-				"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-				"Accept": "application/json"
-			}
-			
-			if self.internal_proxy_url:
-				try:
-					from aiohttp_socks import ProxyConnector
-					connector = ProxyConnector.from_url(self.internal_proxy_url)
-					self.session = aiohttp.ClientSession(timeout=timeout, headers=headers, connector=connector)
-				except ImportError:
-					self.session = aiohttp.ClientSession(timeout=timeout, headers=headers)
-			else:
-				self.session = aiohttp.ClientSession(timeout=timeout, headers=headers)
-				
-		return self.session
 
 	async def fetch_json(
 		self, 
@@ -179,56 +187,29 @@ class AsyncHttpClient:
 			for k, v in headers.items():
 				request_headers[str(k)] = str(v)
 
-		# =========================================================================
-		# ТОЧЕЧНЫЙ ПЕРЕХВАТ ПЛАТФОРМ (ПРОБИВАЕМ РКН И КЛАУДФЛЕЕР ЧЕРЕЗ REALITY)
-		# =========================================================================
-		target_domains = ["gateio", "gate.io", "okx", "kucoin", "telegram.org"]
-		if any(domain in url for domain in target_domains):
-			try:
-				async with AsyncSession(impersonate="chrome120") as crypto_session:
-					response = await crypto_session.request(
-						method=method,
-						url=url,
-						params=params,
-						headers=request_headers,
-						data=data,
-						proxy=self.internal_proxy_url,  # Наш зашифрованный туннель
-						timeout=8
-					)
-					
-					if response.status_code != 200:
-						return None
-					return response.json()
-			except Exception as e:
-				logger.error(f"🚨 [ТУННЕЛЬ REALITY] Сбой запроса на {url}: {e}")
-				return None
-
-		# =========================================================================
-		# СТАНДАРТНЫЙ ПУТЬ ДЛЯ ОСТАЛЬНЫХ БИРЖ (BYBIT, BINGX)
-		# =========================================================================
-		session = await self.get_session()
 		try:
-			async with session.request(
-				method=method,
-				url=url,
-				params=params,
-				headers=request_headers,
-				data=data,
-				timeout=aiohttp.ClientTimeout(total=6)
-			) as response:
-				if response.status != 200:
+			async with AsyncSession(impersonate="chrome120") as crypto_session:
+				response = await crypto_session.request(
+					method=method,
+					url=url,
+					params=params,
+					headers=request_headers,
+					data=data,
+					proxy=self.internal_proxy_url,
+					timeout=8
+				)
+				
+				if response.status_code != 200:
 					return None
-				return await response.json()
-		except Exception as e:
-			logger.error(f"🚨 [СЕТЬ ОШИБКА] Сбой запроса к {url}: {e}")
+				return response.json()
+		except Exception:
+			# Мягко глушим единичные таймауты Cloudflare в асинхронном потоке, чтобы не спамить в консоль
 			return None
 
 	async def close(self):
 		"""Безопасная остановка сессий и выгрузка xray из памяти ОС"""
-		if self.session and not self.session.closed:
-			await self.session.close()
 		if self.xray_process:
 			print(f"🛑 [СЕТЬ] Выгружаем фоновый процесс ядра Xray (PID: {self.xray_process.pid})...")
 			self.xray_process.terminate()
 			self.xray_process.wait()
-		print("🔒 [СЕТЬ] Все сетевые сессии и туннели успешно закрыты.")
+		print("🔒 [СЕТЬ] Все сетевые сессии и тунлели успешно закрыты.")
