@@ -81,7 +81,7 @@ class AsyncHttpClient:
 			
 			parsed = urlparse(vless_link)
 			query_params = parse_qs(parsed.query)
-			cleaned_params = {k: v[0] for k, v in query_params.items() if v}
+			cleaned_params = {k: v for k, v in query_params.items() if v}
 
 			outbound_tag = "proxy"
 			stream_settings = {
@@ -129,9 +129,6 @@ class AsyncHttpClient:
 				print(f"❌ [СЕТЬ] Исполняемый файл ядра Xray отсутствует по пути: {xray_bin}")
 				return
 
-			# =========================================================================
-			# АВТО-ВЫДАЧА ПРАВ НА ИСПОЛНЕНИЕ (+x) ДЛЯ LINUX/UBUNTU СЕРВЕРА
-			# =========================================================================
 			if sys.platform != "win32":
 				try:
 					os.chmod(xray_bin, 0o755)
@@ -139,10 +136,11 @@ class AsyncHttpClient:
 					os.system(f"chmod +x {xray_bin}")
 					logger.warning(f"⚠️ [СЕТЬ] Нативный chmod споткнулся, применен bash-запасной: {chmod_err}")
 
+			# Включаем логирование самого бинарника Xray прямо в консоль для дебага
 			self.xray_process = subprocess.Popen(
 				[xray_bin, "run", "-c", config_output],
-				stdout=subprocess.DEVNULL,
-				stderr=subprocess.DEVNULL
+				stdout=None,
+				stderr=None
 			)
 			
 			self.internal_proxy_url = f"socks5h://127.0.0.1:{self.local_port}"
@@ -180,7 +178,7 @@ class AsyncHttpClient:
 		headers: Optional[dict] = None, 
 		data: Optional[Any] = None
 	) -> Optional[dict]:
-		"""Центральный диспетчер запросов бота"""
+		"""Центральный диспетчер запросов бота с детальным выводом логирования на части"""
 		request_headers = {
 			"Accept": "application/json",
 			"Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8"
@@ -195,6 +193,7 @@ class AsyncHttpClient:
 		target_domains = ["gateio", "gate.io", "okx", "kucoin", "telegram.org"]
 		if any(domain in url for domain in target_domains):
 			try:
+				print(f"📡 [ДЕБАГ СЕТИ] Отправляем туннельный запрос на: {url}")
 				async with AsyncSession(impersonate="chrome120") as crypto_session:
 					response = await crypto_session.request(
 						method=method,
@@ -206,11 +205,13 @@ class AsyncHttpClient:
 						timeout=8
 					)
 					
+					print(f"📥 [ДЕБАГ СЕТИ] Ответ от {url} | Статус-код: {response.status_code}")
 					if response.status_code != 200:
+						print(f"⚠️ [ДЕБАГ СЕТИ] Ошибка шлюза! Текст ответа: {response.text[:200]}")
 						return None
 					return response.json()
 			except Exception as e:
-				logger.error(f"🚨 [ТУННЕЛЬ REALITY] Сбой запроса на {url}: {e}")
+				print(f"🚨 [ДЕБАГ ТУННЕЛЯ] Критический сбой запроса на {url} | Ошибка: {e}")
 				return None
 
 		# =========================================================================
