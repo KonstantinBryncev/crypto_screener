@@ -74,7 +74,7 @@ class ArbitrageManager:
 		
 		self.exchanges.clear()
 		for exch_id, exch_class in exchange_mapping.items():
-			# 🛠 Сверяем с длинными ключами хостов из твоего конфига
+			# Сверяем с длинными ключами хостов из твоего конфига
 			host_key = f"{exch_id}_base_url"
 			if host_key in self.hosts:
 				creds = exch_creds.get(exch_id, {})
@@ -110,7 +110,7 @@ class ArbitrageManager:
 		all_sets = []
 		
 		for exchange, endpoint in exchanges_endpoints.items():
-			# 🛠 Маппинг под твои длинные ключи хостов из config_bot.json
+			# Маппинг под твои длинные ключи хостов из config_bot.json
 			host_key = f"{exchange}_base_url"
 			if host_key not in self.hosts:
 				continue
@@ -241,6 +241,7 @@ class ArbitrageManager:
 					ex_a = exch_names[i]
 					ex_b = exch_names[j]
 					
+					# 🛠 ЖЕСТКИЙ ФИЛЬТР КОНСОЛИ: вызываем калькулятор, в него уже зашит порог из конфига (self.min_spread)
 					self.analyzer.calculate_spot_spread(
 						symbol=symbol,
 						exchange_a_name=ex_a,
@@ -248,7 +249,7 @@ class ArbitrageManager:
 						exchange_b_name=ex_b,
 						orderbook_b=orderbooks[ex_b],
 						base_volume=self.base_volume,
-						min_spread_pct=self.min_spread,
+						min_spread_pct=self.min_spread,  # Сюда прилетит твои 0.5% из конфига
 						max_spread_pct=self.max_spread,
 						trade_fee_pct=self.trade_fee
 					)
