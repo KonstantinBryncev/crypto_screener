@@ -81,7 +81,12 @@ class AsyncHttpClient:
 			
 			parsed = urlparse(vless_link)
 			query_params = parse_qs(parsed.query)
-			cleaned_params = {k: v for k, v in query_params.items() if v}
+			
+			# 🛠 ГАРАНТИРУЕМ, ЧТО ПАРАМЕТРЫ СТАНУТ СТРОКАМИ, А НЕ МАССИВАМИ СТРОК
+			cleaned_params = {}
+			for k, v in query_params.items():
+				if v:
+					cleaned_params[k] = str(v[0])
 
 			outbound_tag = "proxy"
 			stream_settings = {
@@ -136,7 +141,7 @@ class AsyncHttpClient:
 					os.system(f"chmod +x {xray_bin}")
 					logger.warning(f"⚠️ [СЕТЬ] Нативный chmod споткнулся, применен bash-запасной: {chmod_err}")
 
-			# Включаем логирование самого бинарника Xray прямо в консоль для дебага
+			# Оставляем вывод в консоль для контроля успешного подключения туннеля
 			self.xray_process = subprocess.Popen(
 				[xray_bin, "run", "-c", config_output],
 				stdout=None,
