@@ -19,12 +19,12 @@ class ArbitrageAnalyzer:
         """Установка нотификатора для отправки сигналов в Телеграм"""
         self.notifier = notifier
 
-    def _save_to_database(self, symbol: str, ex_buy: str, ex_sell: str, buy_price: float, sell_price: float):
+    def _save_to_database(self, symbol: str, ex_buy: str, ex_sell: str, buy_price: float, sell_price: float, spread: float):
         """Внутренний метод жесткой записи сигнала в таблицу possible_trades"""
-        # 🛠 УБРАЛИ net_spread: пишем строго в те колонки, которые 100% есть на скрине DBeaver
+        # 🎯 НАПРАВЛЯЕМ ПРОЦЕНТЫ СТРОГО В ТВОЮ КОЛОНКУ spread_pct
         query = """
-            INSERT INTO possible_trades (timestamp, symbol, buy_exchange, sell_exchange, buy_price, sell_price)
-            VALUES (%s, %s, %s, %s, %s, %s);
+            INSERT INTO possible_trades (timestamp, symbol, buy_exchange, sell_exchange, buy_price, sell_price, spread_pct)
+            VALUES (%s, %s, %s, %s, %s, %s, %s);
         """
         conn = None
         try:
@@ -36,7 +36,8 @@ class ArbitrageAnalyzer:
                     ex_buy.upper(),
                     ex_sell.upper(),
                     buy_price,
-                    sell_price
+                    sell_price,
+                    round(spread, 2)
                 ))
             conn.commit()
         except Exception as db_err:
@@ -65,7 +66,6 @@ class ArbitrageAnalyzer:
             if not asks_a or not bids_b:
                 return
 
-            # Достаем чистые копейки из структуры вложенных массивов
             best_ask_a = float(asks_a[0][0])
             best_bid_b = float(bids_b[0][0])
 
@@ -89,13 +89,14 @@ class ArbitrageAnalyzer:
                 print(f"💰 Продать [{exchange_b_name.upper()}]: {best_bid_b:.6f}")
                 print(f"📈 Чистый спред: +{net_spread_pct:.2f}% (+{profit_usdt:.2f} USDT)\n", flush=True)
 
-                # 2. ЗАПИСЬ В POSTGRESQL (передаем только существующие колонки)
+                # 2. ЗАПИСЬ В POSTGRESQL (с передачей процентов в spread_pct)
                 self._save_to_database(
                     symbol=symbol,
                     ex_buy=exchange_a_name,
                     ex_sell=exchange_b_name,
                     buy_price=best_ask_a,
-                    sell_price=best_bid_b
+                    sell_price=best_bid_b,
+                    spread=net_spread_pct
                 )
 
                 # 3. Отправка в Телеграм
