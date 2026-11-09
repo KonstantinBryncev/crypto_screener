@@ -74,12 +74,14 @@ class ArbitrageManager:
 		
 		self.exchanges.clear()
 		for exch_id, exch_class in exchange_mapping.items():
-			if exch_id in self.hosts:
+			# 🛠 Сверяем с длинными ключами хостов из твоего конфига
+			host_key = f"{exch_id}_base_url"
+			if host_key in self.hosts:
 				creds = exch_creds.get(exch_id, {})
 				
 				kwargs = {
 					"network_client": self.network_client,
-					"base_url": self.hosts[exch_id],
+					"base_url": self.hosts[host_key],
 					"monitored_symbols": self.monitored_symbols, # Передаем полный динамический список пар
 					"api_key": creds.get("api_key", ""),
 					"api_secret": creds.get("api_secret", "")
@@ -108,16 +110,21 @@ class ArbitrageManager:
 		all_sets = []
 		
 		for exchange, endpoint in exchanges_endpoints.items():
-			if exchange not in self.hosts:
+			# 🛠 Маппинг под твои длинные ключи хостов из config_bot.json
+			host_key = f"{exchange}_base_url"
+			if host_key not in self.hosts:
 				continue
+				
 			try:
-				base_url = self.hosts[exchange].rstrip("/")
+				base_url = self.hosts[host_key].rstrip("/")
 				if exchange == "gate":
 					url = f"{base_url}/api/v4{endpoint}"
+				elif "api/v4" in base_url and exchange == "gate":
+					url = f"{base_url}{endpoint}"
 				else:
 					url = f"{base_url}{endpoint}"
 				
-				# 🎯 ГАРАНТИЯ СЕТИ: Вызываем строго наш fetch_json синглтона
+				# Вызываем наш fetch_json синглтона через Reality-туннель
 				data = await self.network_client.fetch_json(url, method="GET")
 				if not data:
 					print(f"⚠️ [СЕТЬ] Шлюз {exchange.upper()} промолчал. Проверяем Reality-настройки.")
@@ -184,7 +191,7 @@ class ArbitrageManager:
 		init_tasks = [exch.init_exchange() for exch in self.exchanges.values()]
 		await asyncio.gather(*init_tasks)
 		
-		await self.tg_notifier.send_message("🔔 *Асинхронный радар-скринер успешно запущен на 423 пары к USDT!*")
+		await self.tg_notifier.send_message(f"🔔 *Асинхронный радар-скринер успешно запущен на {len(self.monitored_symbols)} пар к USDT!*")
 		print("🟢 [МЕНЕДЖЕР] Скринер успешно начал циклическое сканирование стаканов.", flush=True)
 		
 		while True:
