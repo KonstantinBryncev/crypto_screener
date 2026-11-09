@@ -59,13 +59,13 @@ class AsyncHttpClient:
 				bot_config = json.load(f)
 			
 			net_settings = bot_config.get("network", {})
-			vless_link = net_settings.get("vless_link")
+			vless_link = net_settings.get("vless_link", "")
 			
-			if not vless_link or "ВАША_" in vless_link:
-				print("⚠️ [СЕТЬ] VLESS ссылка не настроена. Скринер работает в прямом сетевом режиме.")
+			# 🛠 ЖЕЛЕЗНЫЙ ФИЛЬТР: Отсекаем выключенный режим, пустые строки и заглушки
+			if not vless_link or any(x in vless_link.upper() for x in ["ВАША_", "ВЫКЛ", "OFF", "U0412"]):
+				print("⚠️ [СЕТЬ] VPN отключен в конфигурации. Скринер работает в прямом сетевом режиме.")
 				return
 
-			# 🐧 Автоматически определяем расширение бинарника в зависимости от ОС сервера
 			default_bin = "bin/xray" if sys.platform != "win32" else "bin/xray.exe"
 			xray_bin_setting = net_settings.get("xray_bin_path", default_bin)
 			
@@ -84,7 +84,7 @@ class AsyncHttpClient:
 			cleaned_params = {}
 			for k, v in query_params.items():
 				if v and len(v) > 0:
-					cleaned_params[k] = str(v[0]).strip()
+					cleaned_params[k] = str(v).strip()
 
 			outbound_tag = "proxy"
 			
@@ -97,7 +97,7 @@ class AsyncHttpClient:
 				"security": cleaned_params.get("security", "none"),
 				"sockopt": {
 					"mark": 0,
-					"tcpFastOpen": True  # Включаем ускоренное открытие TCP-пакетов
+					"tcpFastOpen": True
 				}
 			}
 			
@@ -107,7 +107,7 @@ class AsyncHttpClient:
 					"serverName": cleaned_params.get("sni", ""),
 					"publicKey": cleaned_params.get("pbk", ""),
 					"shortId": cleaned_params.get("sid", ""),
-					"fingerprint": "none"  # 🛠 Отключаем двойной фингерпринт в Xray, разгружаем TLS
+					"fingerprint": "none"
 				}
 				
 			if transport_type == "xhttp":
@@ -118,7 +118,7 @@ class AsyncHttpClient:
 				}
 
 			xray_config = {
-				"log": {"loglevel": "error"},  # Глушим лишний спам предупреждений gRPC
+				"log": {"loglevel": "error"},
 				"inbounds": [{
 					"port": self.local_port,
 					"listen": "127.0.0.1",
@@ -138,7 +138,7 @@ class AsyncHttpClient:
 							}]
 						}, 
 						"streamSettings": stream_settings,
-						"mux": {"enabled": True, "concurrency": 8}  # 🛠 Включаем мультиплексирование для сотен асинхронных запросов стаканов
+						"mux": {"enabled": True, "concurrency": 8}
 					},
 					{"tag": "direct", "protocol": "freedom", "settings": {}}
 				]
