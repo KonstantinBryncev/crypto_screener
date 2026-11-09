@@ -91,12 +91,11 @@ class ArbitrageManager:
 
 	async def load_all_usdt_pairs(self):
 		"""Автоматический сбор абсолютно всех доступных пар к USDT со всех работающих шлюзов"""
+		print("🔄 [МЕНЕДЖЕР] Инициализация Reality-туннеля. Ожидаем 3 секунды на прогрев...")
 		# Даем ядру Xray 3 секунды на установку стабильного Reality-соединения
 		await asyncio.sleep(3.0)
 		
 		print("🔄 [МЕНЕДЖЕР] Собираем список доступных монет к USDT через Reality-туннели...")
-		# ... дальше весь твой остальной код метода без изменений ...
-
 		
 		exchanges_endpoints = {
 			"bybit": "/v5/market/instruments-info?category=spot",
@@ -191,7 +190,7 @@ class ArbitrageManager:
 			try:
 				t_start = time.time()
 				
-				# Разбиваем 423 пары на пачки по 35 штук, чтобы асинхронность работала со свистом
+				# Разбиваем пары на пачки по 35 штук, чтобы асинхронность работала со свистом
 				batch_size = 35
 				for i in range(0, len(self.monitored_symbols), batch_size):
 					batch = self.monitored_symbols[i:i+batch_size]
