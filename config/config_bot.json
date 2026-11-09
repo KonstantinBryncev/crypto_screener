@@ -57,7 +57,7 @@
 		"snapshot_interval_minutes": 10.0,
 
 		"_comment_filters": "=== НАСТРОЙКИ ФИЛЬТРАЦИИ СИГНАЛОВ И ВЫВОДА В КОНСОЛЬ ===",
-		"min_spread_percent": 0.5,
+		"min_spread_percent": 1.0,
 		"max_spread_percent": 50.0,
 		"trade_fee_percent": 0.1,
 		"min_volume_usdt": 1.0,
