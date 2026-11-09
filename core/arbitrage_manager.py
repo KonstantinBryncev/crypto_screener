@@ -1,3 +1,4 @@
+# Файл: core/arbitrage_manager.py
 import asyncio
 import logging
 import os
@@ -92,7 +93,6 @@ class ArbitrageManager:
 	async def load_all_usdt_pairs(self):
 		"""Автоматический сбор абсолютно всех доступных пар к USDT со всех работающих шлюзов"""
 		print("🔄 [МЕНЕДЖЕР] Инициализация Reality-туннеля. Ожидаем 3 секунды на прогрев...")
-		# Даем ядру Xray 3 секунды на установку стабильного Reality-соединения
 		await asyncio.sleep(3.0)
 		
 		print("🔄 [МЕНЕДЖЕР] Собираем список доступных монет к USDT через Reality-туннели...")
@@ -116,7 +116,8 @@ class ArbitrageManager:
 					url = f"{base_url}/api/v4{endpoint}"
 				else:
 					url = f"{base_url}{endpoint}"
-					
+				
+				# 🎯 ГАРАНТИЯ СЕТИ: Вызываем строго наш fetch_json синглтона
 				data = await self.network_client.fetch_json(url, method="GET")
 				if not data:
 					print(f"⚠️ [СЕТЬ] Шлюз {exchange.upper()} промолчал. Проверяем Reality-настройки.")
