@@ -4,7 +4,6 @@ from database.storage import DBStorage
 
 INIT_DB_SQL = """
 DROP TABLE IF EXISTS possible_trades CASCADE;
-
 CREATE TABLE possible_trades (
     id SERIAL PRIMARY KEY,
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -14,10 +13,10 @@ CREATE TABLE possible_trades (
     buy_price NUMERIC,
     sell_price NUMERIC,
     spread_pct NUMERIC,
-    volume_24h NUMERIC  -- 🔥 Вернули боевую колонку для объемов
+    volume_24h NUMERIC
 );
-
 """
+
 
 def load_config():
     base_dir = os.path.dirname(os.path.abspath(__file__))
