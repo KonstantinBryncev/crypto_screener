@@ -88,10 +88,11 @@ class ArbitrageManager:
 		
 		print(f"🔄 [МЕНЕДЖЕР] Собираем пары к USDT с суточным объемом торгов выше ${self.min_volume_24h:,}...")
 		
+		# 🛠 ПЕРЕКЛЮЧИЛИ BINGX НА ЖЕЛЕЗНЫЙ МАРКЕТ-ЭНДПОИНТ ТИКЕРОВ
 		exchanges_endpoints = {
 			"bybit": "/v5/market/tickers?category=spot",
 			"okx": "/api/v5/market/tickers?instType=SPOT",
-			"bingx": "/openApi/spot/v1/common/symbols",
+			"bingx": "/openApi/spot/v1/market/getTicker",
 			"gate": "/api/v4/spot/tickers",
 			"kucoin": "/api/v1/market/allTickers"
 		}
@@ -128,16 +129,20 @@ class ArbitrageManager:
 						if inst_id.endswith("-USDT"):
 							vol = float(item.get("volCcy24h", 0))
 							if vol >= self.min_volume_24h:
-								# 🛠 ТВОЙ РОДНОЙ ИСПРАВЛЕННЫЙ ИНДЕКС СЛИТА НА МЕСТЕ
 								base = inst_id.split("-")[0]
 								ex_pairs.add(f"{base}/USDT")
 								
 				elif exchange == "bingx":
-					symbols_list = data.get("data", {}).get("symbols", [])
-					for item in symbols_list:
-						if item.get("quoteAsset") == "USDT" and item.get("status") == 1:
-							base = item.get("baseAsset")
-							ex_pairs.add(f"{base}/USDT")
+					# 🛠 НАДЕЖНЫЙ ПАРСИНГ ЖИВЫХ ТИКЕРОВ BINGX С ФИЛЬТРАЦИЕЙ ОБЪЕМА
+					tickers_list = data.get("data", [])
+					if isinstance(tickers_list, list):
+						for item in tickers_list:
+							symbol = item.get("symbol", "")
+							if symbol.endswith("-USDT"):
+								vol = float(item.get("volume", 0))
+								if vol >= self.min_volume_24h:
+									base = symbol.split("-")[0]
+									ex_pairs.add(f"{base}/USDT")
 								
 				elif exchange == "gate":
 					if isinstance(data, list):
