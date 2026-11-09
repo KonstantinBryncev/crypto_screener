@@ -44,7 +44,7 @@ class ArbitrageAnalyzer:
                     buy_price,
                     sell_price,
                     round(spread, 2),
-                    round(volume_24h, 2)  -- 🎯 Пишем суточный оборот в базу!
+                   round(volume_24h, 2)
                 ))
             conn.commit()
         except Exception as db_err:
