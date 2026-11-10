@@ -50,13 +50,13 @@
 	},
 
 	  "arbitrage": {
-        "scan_delay_seconds": 4.0,
-        "base_order_usdt": 500.0,
-        "min_spread_percent": -1.0,
-        "max_spread_percent": 15.0,
-        "trade_fee_percent": 0.1,
-        "min_volume_24h_usdt": 50000.0
-    },
+		"scan_delay_seconds": 4.0,
+		"base_order_usdt": 500.0,
+		"min_spread_percent": -1.0,
+		"max_spread_percent": 15.0,
+		"trade_fee_percent": 0.1,
+		"min_volume_24h_usdt": 50000.0
+	},
 
 	"telegram": {
 		"bot_token": "ТВОЙ_ТОКЕН_БОТА",
@@ -64,9 +64,10 @@
 	},
 
 	"network": {
-	    "vless_link": "vless://12a10a54-f481-4ad1-b39f-f65efaef5854@92.118.168.39:443?encryption=none&flow=xtls-rprx-vision&fp=chrome&pbk=oJn3mcv_oUhP_OzMOgnDtuHCFweHmI8c2blVECBRSVw&security=reality&sid=943d30163de5&sni=fr.birchcloud.org&spx=%2Fe68c07a4bc034cf&support-x25519mlkem768=true&type=tcp#neurokos-ewhov9qp6x",
-	    "xray_bin_path": "bin/xray",
-	    "config_output_path": "config.json"
+		"vless_link": "vless://12a10a54-f481-4ad1-b39f-f65efaef5854@92.118.168.39:443?encryption=none&flow=xtls-rprx-vision&fp=chrome&pbk=oJn3mcv_oUhP_OzMOgnDtuHCFweHmI8c2blVECBRSVw&security=reality&sid=943d30163de5&sni=fr.birchcloud.org&spx=%2Fe68c07a4bc034cf&support-x25519mlkem768=true&type=tcp#neurokos-ewhov9qp6x",
+		"local_socks_port": 52115,
+		"xray_bin_path": "bin/xray",
+		"config_output_path": "config.json"
 	}
 }
 
