@@ -28,11 +28,11 @@ class AsyncHttpClient:
 		self.config = config or {}
 		self.net_config = self.config.get("network", {})
 		
-		# Загружаем параметры (приоритет из config_bot.json, иначе дефолты)
+		# Загружаем параметры из config_bot.json
 		self.vless_link = self.net_config.get("vless_link", "")
 		self.socks_port = int(self.net_config.get("local_socks_port", 52115))
 		
-		# Адаптируем пути под Linux (убираем .exe, если скрипт на сервере)
+		# Адаптируем пути под Linux
 		bin_path = self.net_config.get("xray_bin_path", "bin/xray")
 		if sys.platform != "win32" and bin_path.endswith(".exe"):
 			bin_path = bin_path.replace(".exe", "")
@@ -74,7 +74,6 @@ class AsyncHttpClient:
 		params = parsed_data["params"]
 		OUTBOUND_TAG = "proxy"
 
-		# Базовые настройки исходящего прокси-соединения
 		outbound_settings = {
 			"vnext": [{
 				"address": parsed_data["address"],
@@ -86,7 +85,6 @@ class AsyncHttpClient:
 			}]
 		}
 
-		# Внедряем параметр flow (КРИТИЧНО для xtls-rprx-vision!)
 		if params.get("flow"):
 			outbound_settings["vnext"][0]["users"][0]["flow"] = params.get("flow")
 
@@ -95,7 +93,6 @@ class AsyncHttpClient:
 			"security": params.get("security", "none")
 		}
 
-		# Настройка параметров маскировки Reality
 		if params.get("security") == "reality":
 			stream_settings["realitySettings"] = {
 				"show": False,
@@ -105,7 +102,6 @@ class AsyncHttpClient:
 				"fingerprint": params.get("fp", "chrome")
 			}
 
-		# Поддержка различных типов транспорта транспорта (gRPC / WS)
 		if params.get("type") == "grpc":
 			stream_settings["grpcSettings"] = {"serviceName": params.get("serviceName", "")}
 		elif params.get("type") == "ws":
@@ -114,7 +110,6 @@ class AsyncHttpClient:
 				"headers": {"Host": params.get("sni", "")}
 			}
 
-		# Безопасный DNS для исключения блокировок Cloudflare на подлете
 		dns_config = {
 			"disableCache": False,
 			"disableFallback": True,
@@ -157,19 +152,17 @@ class AsyncHttpClient:
 		with open(self.config_output_path, "w", encoding="utf-8") as file:
 			json.dump(xray_json, file, indent=4, ensure_ascii=False)
 
-		# На Linux принудительно выдаем права бинарнику на выполнение
 		if sys.platform != "win32" and os.path.exists(self.xray_bin):
 			os.chmod(self.xray_bin, 0o755)
 
 		try:
-			# Запуск ядра в фоне
 			self.xray_process = await asyncio.create_subprocess_exec(
 				self.xray_bin, "run", "-c", self.config_output_path,
 				stdout=asyncio.subprocess.DEVNULL,
 				stderr=asyncio.subprocess.DEVNULL
 			)
 			print(f"🔒 [СЕТЬ] Локальный ВПН-шлюз успешно поднят на порту {self.socks_port} (PID: {self.xray_process.pid})")
-			await asyncio.sleep(2.5)  # Даем время ядру зацепиться за прокси
+			await asyncio.sleep(2.5)
 			return True
 		except Exception as e:
 			print(f"🚨 [СЕТЬ] Ошибка инициализации ядра Xray: {e}")
@@ -181,7 +174,7 @@ class AsyncHttpClient:
 			return self.session
 
 		headers = {
-			"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+			"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, graphs) Chrome/130.0.0.0 Safari/537.36"
 		}
 
 		if self.vless_link and self.xray_process:
@@ -192,11 +185,12 @@ class AsyncHttpClient:
 			self.session = aiohttp.ClientSession(headers=headers)
 		return self.session
 
-	async def fetch_json(self, url: str) -> dict:
-		"""Безопасно вытягивает JSON стаканов через туннель"""
+	# КРИТИЧЕСКИЙ ФИКС: Добавили поддержку аргумента method и **kwargs, чтобы коннекторы не падали!
+	async def fetch_json(self, url: str, method: str = "GET", **kwargs) -> dict:
+		"""Универсальный безопасный метод запроса за стаканами бирж"""
 		session = await self.get_session()
 		try:
-			async with session.get(url, timeout=4) as response:
+			async with session.request(method, url, timeout=4, **kwargs) as response:
 				if response.status == 200:
 					return await response.json()
 				return None
@@ -204,7 +198,6 @@ class AsyncHttpClient:
 			return None
 
 	async def close(self):
-		"""Чистит сессии и процессы при остановке бота"""
 		if self.session and not self.session.closed:
 			await self.session.close()
 		if self.xray_process:
