@@ -73,18 +73,26 @@ class ArbitrageAnalyzer:
 		finally:
 			conn.close()
 
-	def calculate_spot_spread(self, symbol, buy_exchange, sell_exchange, buy_price, sell_price, volume_24h=0.0):
+		def calculate_spot_spread(self, symbol, buy_exchange=None, sell_exchange=None, buy_price=None, sell_price=None, volume_24h=0.0, **kwargs):
 		"""
 		Рассчитывает чистый процентный спред между ценами покупки и продажи.
-		Включает встроенную фильтрацию ложных округлений со стороны API биржи BingX.
+		Адаптирован под любые имена аргументов из arbitrage_manager (exchange_a_name, price_a и т.д.).
 		"""
 		try:
+			# Адаптация имен полей из менеджера арбитража
+			buy_exchange = buy_exchange or kwargs.get("exchange_a_name") or kwargs.get("buy_ex")
+			sell_exchange = sell_exchange or kwargs.get("exchange_b_name") or kwargs.get("sell_ex")
+			buy_price = buy_price if buy_price is not None else (kwargs.get("price_a") or kwargs.get("buy_p"))
+			sell_price = sell_price if sell_price is not None else (kwargs.get("price_b") or kwargs.get("sell_p"))
+			volume_24h = volume_24h or kwargs.get("volume") or 0.0
+
 			buy_price = float(buy_price)
 			sell_price = float(sell_price)
 			volume_24h = float(volume_24h)
 			
 			if buy_price <= 0:
 				return None
+
 
 			# --- ЗАЩИТНЫЙ ФИЛЬТР БАГА ОКРУГЛЕНИЯ BINGX ---
 			# Если одна из сторон связки — BingX, проверяем цену на аномальные нули
