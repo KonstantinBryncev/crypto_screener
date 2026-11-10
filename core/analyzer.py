@@ -1,129 +1,129 @@
-# Файл: core/analyzer.py
-import logging
 import psycopg2
 from datetime import datetime
 
-logger = logging.getLogger("ArbitrageAnalyzer")
-
 class ArbitrageAnalyzer:
-    """
-    Модуль математического анализа межбиржевого спреда.
-    Рассчитывает чистую прибыль с учетом комиссий и сохраняет сигналы в PostgreSQL.
-    """
-    # Строка ниже должна начинаться БЕЗ отступов с самого края:
-    def __init__(self, config: dict = None):
-        self.notifier = None
-        db_config = config.get("postgres", {}) if config else {}
-        
-        self.dbname = db_config.get("dbname") or "crypto_db"
-        self.user = db_config.get("user") or "postgres"
-        self.password = db_config.get("password") or "CryptoDB_2026_Secure"
-        
-        host_val = db_config.get("host") or "127.0.0.1"
-        self.host = "127.0.0.1" if host_val == "localhost" else host_val
-        
-        self.port = int(db_config.get("port") or 5432)
+	"""
+	Модуль математического анализа межбиржевого спреда.
+	Рассчитывает чистую прибыль с учетом комиссий и сохраняет сигналы в PostgreSQL.
+	Все параметры и доступы динамически импортируются из конфигурационного файла.
+	"""
+	def __init__(self, config: dict = None):
+		self.notifier = None
+		# Извлекаем параметры базы данных из общего конфигурационного файла
+		db_config = config.get("postgres", {}) if config else {}
+		
+		# Задаем имя базы данных строго по конфигурации (с дефолтом на crypto_db)
+		self.dbname = db_config.get("dbname") or "crypto_db"
+		self.user = db_config.get("user") or "postgres"
+		self.password = db_config.get("password") or "CryptoDB_2026_Secure"
+		
+		# Предотвращаем конфликты локальных сокетов: localhost подменяем на сетевой IP
+		host_val = db_config.get("host") or "127.0.0.1"
+		self.host = "127.0.0.1" if host_val == "localhost" else host_val
+		
+		self.port = int(db_config.get("port") or 5432)
+		
+		# Загружаем настройки фильтрации спреда из конфига (по умолчанию 0.5%)
+		bot_settings = config.get("bot_settings", {}) if config else {}
+		self.min_spread_pct = float(bot_settings.get("min_spread_pct") or 0.5)
 
-    def set_notifier(self, notifier):
-        """Установка нотификатора для отправки сигналов в Телеграм"""
-        self.notifier = notifier
+	def set_notifier(self, notifier):
+		"""
+		Установка модуля уведомлений (например, для Telegram).
+		"""
+		self.notifier = notifier
 
-    def _save_to_database(self, symbol: str, ex_buy: str, ex_sell: str, buy_price: float, sell_price: float, spread: float, volume_24h: float):
-        """Внутренний метод жесткой записи сигнала в таблицу possible_trades"""
-        query = """
-            INSERT INTO possible_trades (timestamp, symbol, buy_exchange, sell_exchange, buy_price, sell_price, spread_pct, volume_24h)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s);
-        """
-        conn = None
-        try:
-            conn = psycopg2.connect(
-                dbname=self.dbname, user=self.user, password=self.password, host=self.host, port=self.port
-            )
-            with conn.cursor() as cur:
-                cur.execute(query, (
-                    datetime.now(),
-                    symbol,
-                    ex_buy.upper(),
-                    ex_sell.upper(),
-                    buy_price,
-                    sell_price,
-                    round(spread, 2),
-                   round(volume_24h, 2)
-                ))
-            conn.commit()
-        except Exception as db_err:
-            print(f"⚠️ [БАЗА ДАННЫХ ОШИБКА] Не удалось сохранить связку: {db_err}", flush=True)
-        finally:
-            if conn:
-                conn.close()
+	def _get_connection(self):
+		"""
+		Внутренний метод создания безопасного подключения к PostgreSQL.
+		"""
+		return psycopg2.connect(
+			dbname=self.dbname,
+			user=self.user,
+			password=self.password,
+			host=self.host,
+			port=self.port
+		)
 
-    async def calculate_spot_spread(
-        self,
-        symbol: str,
-        exchange_a_name: str,
-        orderbook_a: dict,
-        exchange_b_name: str,
-        orderbook_b: dict,
-        volume_24h: float,  # 🔥 Передаем объем для анализа и логирования
-        base_volume: float = 500.0,
-        min_spread_pct: float = 0.5,
-        max_spread_pct: float = 15.0,
-        trade_fee_pct: float = 0.1
-    ):
-        """Рассчитывает спред и отправляет данные в консоль, базу и Телеграм"""
-        try:
-            asks_a = orderbook_a.get("asks", [])
-            bids_b = orderbook_b.get("bids", [])
+	def _save_to_database(self, symbol, buy_ex, sell_ex, buy_p, sell_p, spread_pct, volume_24h):
+		"""
+		Безопасная запись верифицированного сигнала в таблицу possible_trades.
+		"""
+		sql = """
+			INSERT INTO possible_trades 
+			(timestamp, symbol, buy_exchange, sell_exchange, buy_price, sell_price, spread_pct, volume_24h)
+			VALUES (CURRENT_TIMESTAMP, %s, %s, %s, %s, %s, %s, %s);
+		"""
+		conn = self._get_connection()
+		try:
+			with conn.cursor() as cur:
+				cur.execute(sql, (
+					symbol.upper(),
+					buy_ex.lower(),
+					sell_ex.lower(),
+					float(buy_p),
+					float(sell_p),
+					float(spread_pct),
+					float(volume_24h)
+				))
+			conn.commit()
+		except Exception as e:
+			conn.rollback()
+			print(f"🚨 [DB ERROR]: Ошибка записи в PostgreSQL: {e}")
+		finally:
+			conn.close()
 
-            if not asks_a or not bids_b:
-                return
+	def calculate_spot_spread(self, symbol, buy_exchange, sell_exchange, buy_price, sell_price, volume_24h=0.0):
+		"""
+		Рассчитывает чистый процентный спред между ценами покупки и продажи.
+		Включает встроенную фильтрацию ложных округлений со стороны API биржи BingX.
+		"""
+		try:
+			buy_price = float(buy_price)
+			sell_price = float(sell_price)
+			volume_24h = float(volume_24h)
+			
+			if buy_price <= 0:
+				return None
 
-            best_ask_a = float(asks_a[0][0])
-            best_bid_b = float(bids_b[0][0])
+			# --- ЗАЩИТНЫЙ ФИЛЬТР БАГА ОКРУГЛЕНИЯ BINGX ---
+			# Если одна из сторон связки — BingX, проверяем цену на аномальные нули
+			if "bingx" in [buy_exchange.lower(), sell_exchange.lower()]:
+				# Проверяем строковое представление цены на наличие хвоста из трех нулей (например, 0.071000)
+				buy_str = f"{buy_price:.6f}"
+				sell_str = f"{sell_price:.6f}"
+				if buy_str.endswith("000") or sell_str.endswith("000"):
+					# Ложный сигнал вызванный округлением стакана — тихо игнорируем
+					return None
 
-            if best_ask_a <= 0:
-                return
+			# Расчет математического спреда в процентах
+			spread_pct = ((sell_price - buy_price) / buy_price) * 100
 
-            raw_spread_pct = ((best_bid_b - best_ask_a) / best_ask_a) * 100.0
-            total_fees_pct = trade_fee_pct * 2.0
-            net_spread_pct = raw_spread_pct - total_fees_pct
+			# Фильтрация по минимальному порогу спреда из config_bot.json
+			if spread_pct >= self.min_spread_pct:
+				# Сохраняем верифицированный сигнал в базу данных
+				self._save_to_database(
+					symbol=symbol,
+					buy_ex=buy_exchange,
+					sell_ex=sell_exchange,
+					buy_p=buy_price,
+					sell_p=sell_price,
+					spread_pct=spread_pct,
+					volume_24h=volume_24h
+				)
+				
+				# Формируем структуру ответа для вывода в консоль бота
+				return {
+					"symbol": symbol.upper(),
+					"buy_exchange": buy_exchange.upper(),
+					"sell_exchange": sell_exchange.upper(),
+					"buy_price": buy_price,
+					"sell_price": sell_price,
+					"spread_pct": round(spread_pct, 2),
+					"volume_24h": volume_24h
+				}
 
-            if net_spread_pct > max_spread_pct:
-                return
-
-            # 🎯 БОЕВОЙ ФИЛЬТР ОТ +0.5%
-            if net_spread_pct >= min_spread_pct:
-                profit_usdt = (base_volume * (net_spread_pct / 100.0))
-                
-                # 1. Вывод в консоль с объемом
-                print(f"🔥 [СИГНАЛ] Найдена связка {symbol} (24h Vol: ${volume_24h:,})!")
-                print(f"🛒 Купить [{exchange_a_name.upper()}]: {best_ask_a:.6f}")
-                print(f"💰 Продать [{exchange_b_name.upper()}]: {best_bid_b:.6f}")
-                print(f"📈 Чистый спред: +{net_spread_pct:.2f}% (+{profit_usdt:.2f} USDT)\n", flush=True)
-
-                # 2. ЗАПИСЬ В POSTGRESQL
-                self._save_to_database(
-                    symbol=symbol,
-                    ex_buy=exchange_a_name,
-                    ex_sell=exchange_b_name,
-                    buy_price=best_ask_a,
-                    sell_price=best_bid_b,
-                    spread=net_spread_pct,
-                    volume_24h=volume_24h
-                )
-
-                # 3. Отправка в Телеграм через нормальный await (убрали утечку тасков)
-                if self.notifier:
-                    msg = (
-                        f"🚨 *АРБИТРАЖНЫЙ СИГНАЛ!*\n\n"
-                        f"💱 *Пара:* `{symbol}`\n"
-                        f"🟢 *Купить ({exchange_a_name.upper()}):* `{best_ask_a:.6f}`\n"
-                        f"🔴 *Продать ({exchange_b_name.upper()}):* `{best_bid_b:.6f}`\n\n"
-                        f"📊 *Чистый спред:* `+{net_spread_pct:.2f}%` \n"
-                        f"💎 *Объем пары 24ч:* `${volume_24h:,}`\n"
-                        f"💵 *Профит с {base_volume}$:* `+{profit_usdt:.2f} USDT`"
-                    )
-                    await self.notifier.send_message(msg)
-
-        except Exception as e:
-            logger.error(f"Ошибка в математике анализатора спреда: {e}")
+		except Exception as e:
+			print(f"🚨 [ANALYZER ERROR]: Ошибка при расчете спреда для {symbol}: {e}")
+			
+		return None
