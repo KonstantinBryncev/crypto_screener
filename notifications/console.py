@@ -1,27 +1,21 @@
 # Модуль: notifications/console.py
-import logging
 from datetime import datetime
 
-# Настраиваем базовый формат логирования: Время -> Сообщение
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    datefmt='%H:%M:%S'
-)
-
 class ConsoleNotifier:
-    """Модуль вывода сигналов скринера в консоль разработчика"""
+    """Модуль прямого вывода сигналов скринера в консоль разработчика"""
 
     def print_signals(self, signals: list):
-        """Красиво форматирует и выводит список обнаруженных аномалий"""
+        """Форматирует и мгновенно выводит список обнаруженных аномалий через print"""
+        current_time = datetime.now().strftime("%H:%M:%S")
         for signal in signals:
             alert_msg = (
-                f"{signal['direction']} | "
+                f"🔥 {current_time} [СИГНАЛ] {signal['direction']} | "
                 f"Пара: {signal['symbol']} | "
-                f"Изм: {signal['delta']}% | "
+                f"Спред: {signal['delta']}% | "
                 f"{signal['main_metric']} | "
                 f"{signal['volume_info']}"
             )
-            logging.warning(alert_msg)
+            # Форсим прямой вывод в консоль ConEmu в обход логера
+            print(alert_msg, flush=True)
 
 
