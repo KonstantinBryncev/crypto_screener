@@ -85,6 +85,7 @@ class AsyncHttpClient:
 			}]
 		}
 
+		# ЖЕСТКИЙ ФИКС: Правильная вложенность в структуру Xray для параметра flow
 		if params.get("flow"):
 			outbound_settings["vnext"][0]["users"][0]["flow"] = params.get("flow")
 
@@ -174,7 +175,7 @@ class AsyncHttpClient:
 			return self.session
 
 		headers = {
-			"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, graphs) Chrome/130.0.0.0 Safari/537.36"
+			"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
 		}
 
 		if self.vless_link and self.xray_process:
@@ -185,7 +186,6 @@ class AsyncHttpClient:
 			self.session = aiohttp.ClientSession(headers=headers)
 		return self.session
 
-	# КРИТИЧЕСКИЙ ФИКС: Добавили поддержку аргумента method и **kwargs, чтобы коннекторы не падали!
 	async def fetch_json(self, url: str, method: str = "GET", **kwargs) -> dict:
 		"""Универсальный безопасный метод запроса за стаканами бирж"""
 		session = await self.get_session()

@@ -40,10 +40,10 @@ class KuCoinExchange(BaseExchange):
 			
 		data = raw_response.get('data', {})
 		try:
-			# KuCoin отдает глубинную ленту, берем первые 5 уровней для сопоставления:
+			# Теперь KuCoin отдает ровно столько уровней стакана, сколько запросил arbitrage_manager!
 			return {
-				'bids': [[float(item[0]), float(item[1])] for item in data.get('bids', []) if item][:5],
-				'asks': [[float(item[0]), float(item[1])] for item in data.get('asks', []) if item][:5],
+				'bids': [[float(item[0]), float(item[1])] for item in data.get('bids', []) if item][:limit],
+				'asks': [[float(item[0]), float(item[1])] for item in data.get('asks', []) if item][:limit],
 				'symbol': symbol.upper(),
 				'timestamp': int(data.get('time', time.time() * 1000)),
 				'type': 'spot',
@@ -52,6 +52,7 @@ class KuCoinExchange(BaseExchange):
 		except Exception as e:
 			logger.error(f"Ошибка парсинга стакана KuCoin для {symbol}: {e}")
 			return None
+
 
 	async def fetch_balances(self) -> Dict[str, float]:
 		if not self.api_key or not self.api_secret or not self.api_passphrase:
