@@ -493,9 +493,19 @@ class ArbitrageManager:
 		
 		# Конкурентно собираем стаканы со всех доступных бирж
 		results = await asyncio.gather(*tasks.values(), return_exceptions=True)
+		
 		for exch_id, orderbook in zip(tasks.keys(), results):
-			if orderbook and not isinstance(orderbook, Exception) and (orderbook.get("asks") or orderbook.get("bids")):
+			# Если поймали системную ошибку кода/сети при запросе к бирже:
+			if isinstance(orderbook, Exception):
+				print(f"🚨 [ОШИБКА КОДА {exch_id.upper()}]: Сбой в коннекторе для {symbol}: {orderbook}", flush=True)
+				continue
+				
+			if orderbook and (orderbook.get("asks") or orderbook.get("bids")):
 				orderbooks[exch_id] = orderbook
+			else:
+				# 🎯 ВЫВОДИМ ОТЛАДКУ: Почему биржа не дала стакан?
+				reason = "Ответ пустой (None) или Cloudflare блок" if orderbook is None else "Пустые списки asks/bids"
+				print(f"⚠️ [ОТЛАДКА СТАКАНА]: Биржа {exch_id.upper()} вернула пустышку для {symbol}. Причина: {reason}", flush=True)
 				
 		# Если стаканы получены минимум от 2 бирж, запускаем межбиржевое сопоставление
 		if len(orderbooks) >= 2:
@@ -506,7 +516,6 @@ class ArbitrageManager:
 				for j in range(i + 1, len(exch_names)):
 					ex_a, ex_b = exch_names[i], exch_names[j]
 					
-					# 🎯 Перехватываем результат анализа спреда
 					res = await self.analyzer.calculate_spot_spread(
 						symbol=symbol, 
 						exchange_a_name=ex_a, 
@@ -520,9 +529,7 @@ class ArbitrageManager:
 						trade_fee_pct=self.trade_fee
 					)
 
-					# 🎯 ЕСЛИ СИГНАЛ НАЙДЕН — ПРИНУДИТЕЛЬНО ВЫВОДИМ В КОНСОЛЬ:
 					if res and isinstance(res, dict) and "spread_pct" in res:
-						# Формируем структуру под твой ConsoleNotifier
 						formatted_signal = {
 							"direction": f"[{res['buy_exchange']} -> {res['sell_exchange']}]",
 							"symbol": res["symbol"],
@@ -530,8 +537,11 @@ class ArbitrageManager:
 							"main_metric": f"Купить: {res['buy_price']} | Продать: {res['sell_price']}",
 							"volume_info": f"Объем 24ч: ${res['volume_24h']:.0f}"
 						}
-						# Вызываем твой нотификатор на экран
 						self.console_notifier.print_signals([formatted_signal])
+		else:
+			# Если не набралось 2 живых стакана для сравнения:
+			print(f"ℹ️ [ПРОПУСК {symbol}]: Живых стаканов всего {len(orderbooks)} из 5. Не с чем сопоставить.", flush=True)
+
 
 
 	async def stop(self):
