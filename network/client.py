@@ -43,6 +43,7 @@ class AsyncHttpClient:
 		self.session = None
 		self._initialized = True
 
+		
 	def _parse_vless_link(self) -> dict:
 		"""Разбирает vless:// на чистые строковые параметры сети"""
 		try:
@@ -54,9 +55,13 @@ class AsyncHttpClient:
 			
 			query_params = parse_qs(parsed.query)
 			cleaned_params = {}
+			
+			# Жестко вытаскиваем строки из списков parse_qs
 			for key, value in query_params.items():
-				if value:
-					cleaned_params[key] = value[0]
+				if value and isinstance(value, list):
+					cleaned_params[key] = str(value[0])
+				elif value:
+					cleaned_params[key] = str(value)
 
 			return {
 				"uuid": parsed.username,
@@ -74,20 +79,23 @@ class AsyncHttpClient:
 		params = parsed_data["params"]
 		OUTBOUND_TAG = "proxy"
 
+		# Базовая структура инбаунда/аутбаунда
+		user_entry = {
+			"id": parsed_data["uuid"],
+			"encryption": "none"
+		}
+		
+		# Если есть flow, кладем его СТРОГО на один уровень с id
+		if params.get("flow"):
+			user_entry["flow"] = params.get("flow")
+
 		outbound_settings = {
 			"vnext": [{
 				"address": parsed_data["address"],
 				"port": parsed_data["port"],
-				"users": [{
-					"id": parsed_data["uuid"],
-					"encryption": "none"
-				}]
+				"users": [user_entry]
 			}]
 		}
-
-		# ЖЕСТКИЙ ФИКС: Правильная вложенность в структуру Xray для параметра flow
-		if params.get("flow"):
-			outbound_settings["vnext"][0]["users"][0]["flow"] = params.get("flow")
 
 		stream_settings = {
 			"network": params.get("type", "tcp"),
@@ -96,7 +104,7 @@ class AsyncHttpClient:
 
 		if params.get("security") == "reality":
 			stream_settings["realitySettings"] = {
-				"show": False,
+				"show": false,
 				"serverName": params.get("sni", ""),
 				"publicKey": params.get("pbk", ""),
 				"shortId": params.get("sid", ""),
@@ -136,6 +144,7 @@ class AsyncHttpClient:
 				"rules": [{"type": "field", "inboundTag": ["socks"], "port": 53, "outboundTag": OUTBOUND_TAG}]
 			}
 		}
+
 
 	async def init_tunnel(self) -> bool:
 		"""Запускает защищенный фоновый процесс Xray-core на сервере"""

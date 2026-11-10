@@ -259,8 +259,13 @@ class ArbitrageManager:
 			if orderbook and (orderbook.get("asks") or orderbook.get("bids")):
 				orderbooks[exch_id] = orderbook
 			else:
-				reason = "Ответ пустой (None) или Cloudflare блок" if orderbook is None else "Пустые списки asks/bids"
-			print(f"⚠️ [ОТЛАДКА СТАКАНА]: Биржа {exch_id.upper()} вернула пустышку для {symbol}. Причина: {reason}", flush=True)
+				# ЖЕСТКИЙ ФИКС: Переменная reason теперь гарантированно существует!
+				if orderbook is None:
+					reason = "Ответ пустой (None) или Cloudflare блок"
+				else:
+					reason = "Пустые списки asks/bids"
+				print(f"⚠️ [ОТЛАДКА СТАКАНА]: Биржа {exch_id.upper()} вернула пустышку для {symbol}. Причина: {reason}", flush=True)
+
 				
 		# Если стаканы получены минимум от 2 бирж, запускаем межбиржевое сопоставление
 		if len(orderbooks) >= 2:
