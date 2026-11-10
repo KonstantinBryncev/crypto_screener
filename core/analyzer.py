@@ -10,15 +10,22 @@ class ArbitrageAnalyzer:
     Модуль математического анализа межбиржевого спреда.
     Рассчитывает чистую прибыль с учетом комиссий и сохраняет сигналы в PostgreSQL.
     """
-    def __init__(self, config: dict = None):
+     def __init__(self, config: dict = None):
         self.notifier = None
-        # Динамически берем настройки из центрального конфига, без хардкода!
+        # Тянем настройки строго из центрального конфига
         db_config = config.get("postgres", {}) if config else {}
-        self.dbname = db_config.get("dbname", "crypto_db")
-        self.user = db_config.get("user", "postgres")
-        self.password = db_config.get("password", "CryptoDB_2026_Secure")
-        self.host = db_config.get("host", "127.0.0.1")
-        self.port = db_config.get("port", 5432)
+        
+        
+        self.dbname = db_config.get("dbname") or "crypto_db"
+        self.user = db_config.get("user") or "postgres"
+        self.password = db_config.get("password") or "CryptoDB_2026_Secure"
+        
+        # Защита: если в конфиге "localhost", подменяем на надежный "127.0.0.1"
+        host_val = db_config.get("host") or "127.0.0.1"
+        self.host = "127.0.0.1" if host_val == "localhost" else host_val
+        
+        self.port = int(db_config.get("port") or 5432)
+
 
     def set_notifier(self, notifier):
         """Установка нотификатора для отправки сигналов в Телеграм"""
