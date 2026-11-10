@@ -1,215 +1,216 @@
 # Файл: network/client.py
 import asyncio
-import aiohttp
 import logging
 import os
 import json
-import subprocess
 import sys
-import socket
-from typing import Optional, Any, List
-from urllib.parse import unquote, urlparse, parse_qs
-
-# Импорт библиотеки маскировки для Reality-туннелей
-from curl_cffi.requests import AsyncSession  
+from urllib.parse import urlparse, parse_qs, unquote
+import aiohttp
+from aiohttp_socks import ProxyConnector
 
 logger = logging.getLogger("AsyncHttpClient")
 
 class AsyncHttpClient:
 	"""
-	Оптимизированный HTTP-клиент (Singleton).
-	Интегрирует ядро Xray, динамически подбирает порты и полностью
-	маскирует запросы ко всем биржам под Chrome через Reality-туннель.
+	Универсальный асинхронный сетевой клиент для торгового бота.
+	Автоматически разворачивает изолированный туннель Xray-core с защитой DNS.
 	"""
 	_instance = None
 
 	def __new__(cls, *args, **kwargs):
 		if not cls._instance:
-			cls._instance = super(AsyncHttpClient, cls).__new__(cls, *args, **kwargs)
-			cls._instance.session = None
-			cls._instance.xray_process = None
-			cls._instance.local_port = None
-			cls._instance.internal_proxy_url = None
-			
-			current_dir = os.path.dirname(os.path.abspath(__file__))
-			project_root = os.path.dirname(current_dir)
-			cls._instance.config_path = os.path.join(project_root, "config", "config_bot.json")
-			
-			cls._instance._start_integrated_xray_vpn()
+			cls._instance = super(AsyncHttpClient, cls).__new__(cls)
 		return cls._instance
 
-	def _find_free_port(self) -> int:
-		"""Динамический поиск свободного порта в системе"""
-		try:
-			with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-				s.bind(('127.0.0.1', 0))
-				return int(s.getsockname()[1])
-		except Exception as e:
-			logger.error(f"Не удалось динамически найти порт: {e}. Берем резервный.")
-			return 10808
-
-	def _start_integrated_xray_vpn(self):
-		"""Парсинг VLESS, генерация чистого JSON и запуск ядра Xray"""
-		if not os.path.exists(self.config_path):
-			print(f"⚠️ [СЕТЬ] Главный файл конфигурации {self.config_path} не найден! VPN не запущен.")
+	def __init__(self, config: dict = None):
+		if hasattr(self, "_initialized"):
 			return
+		self.config = config or {}
+		self.net_config = self.config.get("network", {})
+		
+		# Загружаем параметры (приоритет из config_bot.json, иначе дефолты)
+		self.vless_link = self.net_config.get("vless_link", "")
+		self.socks_port = int(self.net_config.get("local_socks_port", 52115))
+		
+		# Адаптируем пути под Linux (убираем .exe, если скрипт на сервере)
+		bin_path = self.net_config.get("xray_bin_path", "bin/xray")
+		if sys.platform != "win32" and bin_path.endswith(".exe"):
+			bin_path = bin_path.replace(".exe", "")
+		self.xray_bin = os.path.normpath(bin_path)
+		
+		self.config_output_path = self.net_config.get("config_output_path", "config.json")
+		self.xray_process = None
+		self.session = None
+		self._initialized = True
 
+	def _parse_vless_link(self) -> dict:
+		"""Разбирает vless:// на чистые строковые параметры сети"""
 		try:
-			with open(self.config_path, "r", encoding="utf-8") as f:
-				bot_config = json.load(f)
+			if not self.vless_link.startswith("vless://"):
+				return {}
 			
-			net_settings = bot_config.get("network", {})
-			vless_link = net_settings.get("vless_link", "")
+			cleaned_link = self.vless_link.split("#")
+			parsed = urlparse(cleaned_link)
 			
-			# 🛠 ЖЕЛЕЗНЫЙ ФИЛЬТР: Отсекаем выключенный режим, пустые строки и заглушки
-			if not vless_link or any(x in vless_link.upper() for x in ["ВАША_", "ВЫКЛ", "OFF", "U0412"]):
-				print("⚠️ [СЕТЬ] VPN отключен в конфигурации. Скринер работает в прямом сетевом режиме.")
-				return
-
-			default_bin = "bin/xray" if sys.platform != "win32" else "bin/xray.exe"
-			xray_bin_setting = net_settings.get("xray_bin_path", default_bin)
-			
-			if sys.platform != "win32" and xray_bin_setting.endswith(".exe"):
-				xray_bin_setting = xray_bin_setting.replace(".exe", "")
-
-			project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-			xray_bin = os.path.normpath(os.path.join(project_root, xray_bin_setting))
-			config_output = os.path.join(project_root, net_settings.get("config_output_path", "config.json"))
-
-			self.local_port = self._find_free_port()
-			
-			parsed = urlparse(vless_link)
 			query_params = parse_qs(parsed.query)
-			
 			cleaned_params = {}
-			for k, v in query_params.items():
-				if v and len(v) > 0:
-					cleaned_params[k] = str(v).strip()
+			for key, value in query_params.items():
+				if value:
+					cleaned_params[key] = value[0]
 
-			outbound_tag = "proxy"
-			
-			transport_type = cleaned_params.get("type", "tcp")
-			if transport_type == "grpc":
-				transport_type = "xhttp"
-
-			stream_settings = {
-				"network": transport_type,
-				"security": cleaned_params.get("security", "none"),
-				"sockopt": {
-					"mark": 0,
-					"tcpFastOpen": True
-				}
+			return {
+				"uuid": parsed.username,
+				"address": parsed.hostname,
+				"port": int(parsed.port) if parsed.port else 443,
+				"params": cleaned_params,
+				"remark": unquote(parsed.fragment) if parsed.fragment else "crypto-tunnel"
 			}
-			
-			if cleaned_params.get("security") == "reality":
-				stream_settings["realitySettings"] = {
-					"show": False,
-					"serverName": cleaned_params.get("sni", ""),
-					"publicKey": cleaned_params.get("pbk", ""),
-					"shortId": cleaned_params.get("sid", ""),
-					"fingerprint": "none"
-				}
-				
-			if transport_type == "xhttp":
-				stream_settings["xhttpSettings"] = {
-					"mode": "stream-up",
-					"host": cleaned_params.get("sni", ""),
-					"path": "/" + cleaned_params.get("serviceName", "")
-				}
-
-			xray_config = {
-				"log": {"loglevel": "error"},
-				"inbounds": [{
-					"port": self.local_port,
-					"listen": "127.0.0.1",
-					"protocol": "socks",
-					"settings": {"auth": "noauth", "udp": True},
-					"sniffing": {"enabled": True, "destOverride": ["http", "tls", "quic"], "metadataOnly": False}
-				}],
-				"outbounds": [
-					{
-						"tag": outbound_tag, 
-						"protocol": "vless", 
-						"settings": {
-							"vnext": [{
-								"address": parsed.hostname, 
-								"port": int(parsed.port) if parsed.port else 443, 
-								"users": [{"id": parsed.username, "encryption": "none"}]
-							}]
-						}, 
-						"streamSettings": stream_settings,
-						"mux": {"enabled": True, "concurrency": 8}
-					},
-					{"tag": "direct", "protocol": "freedom", "settings": {}}
-				]
-			}
-
-			with open(config_output, "w", encoding="utf-8") as f:
-				json.dump(xray_config, f, indent=4, ensure_ascii=False)
-
-			if not os.path.exists(xray_bin):
-				print(f"❌ [СЕТЬ] Исполняемый файл ядра Xray отсутствует по пути: {xray_bin}")
-				return
-
-			if sys.platform != "win32":
-				try:
-					os.chmod(xray_bin, 0o755)
-				except Exception as chmod_err:
-					os.system(f"chmod +x {xray_bin}")
-					logger.warning(f"⚠️ [СЕТЬ] Нативный chmod споткнулся, применен bash-запасной: {chmod_err}")
-
-			self.xray_process = subprocess.Popen(
-				[xray_bin, "run", "-c", config_output],
-				stdout=subprocess.DEVNULL,
-				stderr=subprocess.DEVNULL
-			)
-			
-			self.internal_proxy_url = f"socks5h://127.0.0.1:{self.local_port}"
-			print(f"🔒 [СЕТЬ] Локальный ВПН-шлюз успешно поднят на порту {self.local_port} (PID: {self.xray_process.pid})")
-
 		except Exception as e:
-			print(f"🚨 [СЕТЬ] Ошибка автозапуска ядра Xray: {e}")
+			logger.error(f"Ошибка парсинга VLESS ссылки: {e}")
+			return {}
 
-	async def fetch_json(
-		self, 
-		url: str, 
-		method: str = "GET", 
-		params: Optional[dict] = None, 
-		headers: Optional[dict] = None, 
-		data: Optional[Any] = None
-	) -> Optional[dict]:
-		"""Центральный диспетчер запросов бота"""
-		request_headers = {
-			"Accept": "application/json",
-			"Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8"
+	def _build_xray_config(self, parsed_data: dict) -> dict:
+		"""Генерирует полную защищенную конфигурацию Xray с Anti-DNS Leak"""
+		params = parsed_data["params"]
+		OUTBOUND_TAG = "proxy"
+
+		# Базовые настройки исходящего прокси-соединения
+		outbound_settings = {
+			"vnext": [{
+				"address": parsed_data["address"],
+				"port": parsed_data["port"],
+				"users": [{
+					"id": parsed_data["uuid"],
+					"encryption": "none"
+				}]
+			}]
 		}
-		if headers:
-			for k, v in headers.items():
-				request_headers[str(k)] = str(v)
+
+		# Внедряем параметр flow (КРИТИЧНО для xtls-rprx-vision!)
+		if params.get("flow"):
+			outbound_settings["vnext"][0]["users"][0]["flow"] = params.get("flow")
+
+		stream_settings = {
+			"network": params.get("type", "tcp"),
+			"security": params.get("security", "none")
+		}
+
+		# Настройка параметров маскировки Reality
+		if params.get("security") == "reality":
+			stream_settings["realitySettings"] = {
+				"show": False,
+				"serverName": params.get("sni", ""),
+				"publicKey": params.get("pbk", ""),
+				"shortId": params.get("sid", ""),
+				"fingerprint": params.get("fp", "chrome")
+			}
+
+		# Поддержка различных типов транспорта транспорта (gRPC / WS)
+		if params.get("type") == "grpc":
+			stream_settings["grpcSettings"] = {"serviceName": params.get("serviceName", "")}
+		elif params.get("type") == "ws":
+			stream_settings["wsSettings"] = {
+				"path": params.get("path", "/"),
+				"headers": {"Host": params.get("sni", "")}
+			}
+
+		# Безопасный DNS для исключения блокировок Cloudflare на подлете
+		dns_config = {
+			"disableCache": False,
+			"disableFallback": True,
+			"servers": [{"address": "https://1.1.1", "port": 53, "outbound": OUTBOUND_TAG}]
+		}
+
+		return {
+			"log": {"loglevel": "warning"},
+			"dns": dns_config,
+			"inbounds": [{
+				"port": self.socks_port,
+				"listen": "127.0.0.1",
+				"protocol": "socks",
+				"settings": {"auth": "noauth", "udp": True},
+				"sniffing": {"enabled": True, "destOverride": ["http", "tls", "quic"], "metadataOnly": False}
+			}],
+			"outbounds": [
+				{"tag": OUTBOUND_TAG, "protocol": "vless", "settings": outbound_settings, "streamSettings": stream_settings},
+				{"tag": "direct", "protocol": "freedom", "settings": {}}
+			],
+			"routing": {
+				"domainStrategy": "AsIs",
+				"rules": [{"type": "field", "inboundTag": ["socks"], "port": 53, "outboundTag": OUTBOUND_TAG}]
+			}
+		}
+
+	async def init_tunnel(self) -> bool:
+		"""Запускает защищенный фоновый процесс Xray-core на сервере"""
+		if not self.vless_link:
+			print("▲ [СЕТЬ] VPN отключен. Скринер работает напрямую.")
+			return False
+
+		config_data = self._parse_vless_link()
+		if not config_data:
+			print("🚨 [СЕТЬ] Ошибка разбора ссылки туннеля.")
+			return False
+
+		xray_json = self._build_xray_config(config_data)
+
+		with open(self.config_output_path, "w", encoding="utf-8") as file:
+			json.dump(xray_json, file, indent=4, ensure_ascii=False)
+
+		# На Linux принудительно выдаем права бинарнику на выполнение
+		if sys.platform != "win32" and os.path.exists(self.xray_bin):
+			os.chmod(self.xray_bin, 0o755)
 
 		try:
-			async with AsyncSession(impersonate="chrome120") as crypto_session:
-				response = await crypto_session.request(
-					method=method,
-					url=url,
-					params=params,
-					headers=request_headers,
-					data=data,
-					proxy=self.internal_proxy_url,
-					timeout=8
-				)
-				
-				if response.status_code != 200:
-					return None
-				return response.json()
+			# Запуск ядра в фоне
+			self.xray_process = await asyncio.create_subprocess_exec(
+				self.xray_bin, "run", "-c", self.config_output_path,
+				stdout=asyncio.subprocess.DEVNULL,
+				stderr=asyncio.subprocess.DEVNULL
+			)
+			print(f"🔒 [СЕТЬ] Локальный ВПН-шлюз успешно поднят на порту {self.socks_port} (PID: {self.xray_process.pid})")
+			await asyncio.sleep(2.5)  # Даем время ядру зацепиться за прокси
+			return True
+		except Exception as e:
+			print(f"🚨 [СЕТЬ] Ошибка инициализации ядра Xray: {e}")
+			return False
+
+	async def get_session(self) -> aiohttp.ClientSession:
+		"""Генерирует сессию, обернутую в локальный SOCKS5 прокси"""
+		if self.session and not self.session.closed:
+			return self.session
+
+		headers = {
+			"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+		}
+
+		if self.vless_link and self.xray_process:
+			proxy_url = f"socks5://127.0.0.1:{self.socks_port}"
+			connector = ProxyConnector.from_url(proxy_url)
+			self.session = aiohttp.ClientSession(connector=connector, headers=headers)
+		else:
+			self.session = aiohttp.ClientSession(headers=headers)
+		return self.session
+
+	async def fetch_json(self, url: str) -> dict:
+		"""Безопасно вытягивает JSON стаканов через туннель"""
+		session = await self.get_session()
+		try:
+			async with session.get(url, timeout=4) as response:
+				if response.status == 200:
+					return await response.json()
+				return None
 		except Exception:
-			# Мягко глушим единичные таймауты Cloudflare в асинхронном потоке, чтобы не спамить в консоль
 			return None
 
 	async def close(self):
-		"""Безопасная остановка сессий и выгрузка xray из памяти ОС"""
+		"""Чистит сессии и процессы при остановке бота"""
+		if self.session and not self.session.closed:
+			await self.session.close()
 		if self.xray_process:
-			print(f"🛑 [СЕТЬ] Выгружаем фоновый процесс ядра Xray (PID: {self.xray_process.pid})...")
-			self.xray_process.terminate()
-			self.xray_process.wait()
-		print("🔒 [СЕТЬ] Все сетевые сессии и тунлели успешно закрыты.")
+			try:
+				self.xray_process.terminate()
+				await self.xray_process.wait()
+				print("🔒 [СЕТЬ] Локальный ВПН-шлюз Xray успешно остановлен.")
+			except Exception:
+				pass
