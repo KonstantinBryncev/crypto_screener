@@ -487,38 +487,52 @@ class ArbitrageManager:
 				await asyncio.sleep(5)
 
 	async def _scan_single_symbol(self, symbol: str):
-			"""Внутренний асинхронный метод сбора стаканов и расчета спреда"""
-			orderbooks = {}
-			tasks = {exch_id: exch_obj.fetch_order_book(symbol, limit=5) for exch_id, exch_obj in self.exchanges.items()}
-			
-			# Конкурентно собираем стаканы со всех доступных бирж
-			results = await asyncio.gather(*tasks.values(), return_exceptions=True)
-			for exch_id, orderbook in zip(tasks.keys(), results):
-				if orderbook and not isinstance(orderbook, Exception) and (orderbook.get("asks") or orderbook.get("bids")):
-					orderbooks[exch_id] = orderbook
-					
-			# Если стаканы получены минимум от 2 бирж, запускаем межбиржевое сопоставление
-			if len(orderbooks) >= 2:
-				exch_names = list(orderbooks.keys())
-				pair_volume = self.symbols_volumes.get(symbol, 0.0)  # Достаем кэшированный суточный объем
+		"""Внутренний асинхронный метод сбора стаканов и расчета спреда"""
+		orderbooks = {}
+		tasks = {exch_id: exch_obj.fetch_order_book(symbol, limit=5) for exch_id, exch_obj in self.exchanges.items()}
+		
+		# Конкурентно собираем стаканы со всех доступных бирж
+		results = await asyncio.gather(*tasks.values(), return_exceptions=True)
+		for exch_id, orderbook in zip(tasks.keys(), results):
+			if orderbook and not isinstance(orderbook, Exception) and (orderbook.get("asks") or orderbook.get("bids")):
+				orderbooks[exch_id] = orderbook
 				
-				for i in range(len(exch_names)):
-					for j in range(i + 1, len(exch_names)):
-						ex_a, ex_b = exch_names[i], exch_names[j]
-						
-						# 🔥 Внедрен await и явная передача min_spread_pct для работы фильтра спреда
-						await self.analyzer.calculate_spot_spread(
-							symbol=symbol, 
-							exchange_a_name=ex_a, 
-							orderbook_a=orderbooks[ex_a],
-							exchange_b_name=ex_b, 
-							orderbook_b=orderbooks[ex_b],
-							volume_24h=pair_volume,  # Передаем объем монеты в анализатор и базу
-							base_volume=self.base_volume, 
-							min_spread_pct=self.min_spread,  # Твой боевой лимит из config_bot.json
-							max_spread_pct=self.max_spread, 
-							trade_fee_pct=self.trade_fee
-						)
+		# Если стаканы получены минимум от 2 бирж, запускаем межбиржевое сопоставление
+		if len(orderbooks) >= 2:
+			exch_names = list(orderbooks.keys())
+			pair_volume = self.symbols_volumes.get(symbol, 0.0)
+			
+			for i in range(len(exch_names)):
+				for j in range(i + 1, len(exch_names)):
+					ex_a, ex_b = exch_names[i], exch_names[j]
+					
+					# 🎯 Перехватываем результат анализа спреда
+					res = await self.analyzer.calculate_spot_spread(
+						symbol=symbol, 
+						exchange_a_name=ex_a, 
+						orderbook_a=orderbooks[ex_a],
+						exchange_b_name=ex_b, 
+						orderbook_b=orderbooks[ex_b],
+						volume_24h=pair_volume,
+						base_volume=self.base_volume, 
+						min_spread_pct=self.min_spread,
+						max_spread_pct=self.max_spread, 
+						trade_fee_pct=self.trade_fee
+					)
+
+					# 🎯 ЕСЛИ СИГНАЛ НАЙДЕН — ПРИНУДИТЕЛЬНО ВЫВОДИМ В КОНСОЛЬ:
+					if res and isinstance(res, dict) and "spread_pct" in res:
+						# Формируем структуру под твой ConsoleNotifier
+						formatted_signal = {
+							"direction": f"[{res['buy_exchange']} -> {res['sell_exchange']}]",
+							"symbol": res["symbol"],
+							"delta": res["spread_pct"],
+							"main_metric": f"Купить: {res['buy_price']} | Продать: {res['sell_price']}",
+							"volume_info": f"Объем 24ч: ${res['volume_24h']:.0f}"
+						}
+						# Вызываем твой нотификатор на экран
+						self.console_notifier.print_signals([formatted_signal])
+
 
 	async def stop(self):
 		"""Корректная остановка модулей при закрытии программы"""
