@@ -10,25 +10,31 @@ class ArbitrageAnalyzer:
     Модуль математического анализа межбиржевого спреда.
     Рассчитывает чистую прибыль с учетом комиссий и сохраняет сигналы в PostgreSQL.
     """
-    def __init__(self):
+    def __init__(self, config: dict = None):
         self.notifier = None
-        # Строка подключения к твоей базе данных
-        self.db_dsn = "dbname=crypto_db user=postgres password=CryptoDB_2026_Secure host=127.0.0.1 port=5432"
+        # Динамически берем настройки из центрального конфига, без хардкода!
+        db_config = config.get("postgres", {}) if config else {}
+        self.dbname = db_config.get("dbname", "crypto_db")
+        self.user = db_config.get("user", "postgres")
+        self.password = db_config.get("password", "CryptoDB_2026_Secure")
+        self.host = db_config.get("host", "127.0.0.1")
+        self.port = db_config.get("port", 5432)
 
     def set_notifier(self, notifier):
         """Установка нотификатора для отправки сигналов в Телеграм"""
         self.notifier = notifier
 
-    def _save_to_database(self, symbol: str, ex_buy: str, ex_sell: str, buy_price: float, sell_price: float, spread: float):
+    def _save_to_database(self, symbol: str, ex_buy: str, ex_sell: str, buy_price: float, sell_price: float, spread: float, volume_24h: float):
         """Внутренний метод жесткой записи сигнала в таблицу possible_trades"""
-        # 🎯 НАПРАВЛЯЕМ ПРОЦЕНТЫ СТРОГО В ТВОЮ КОЛОНКУ spread_pct
         query = """
-            INSERT INTO possible_trades (timestamp, symbol, buy_exchange, sell_exchange, buy_price, sell_price, spread_pct)
-            VALUES (%s, %s, %s, %s, %s, %s, %s);
+            INSERT INTO possible_trades (timestamp, symbol, buy_exchange, sell_exchange, buy_price, sell_price, spread_pct, volume_24h)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s);
         """
         conn = None
         try:
-            conn = psycopg2.connect(self.db_dsn)
+            conn = psycopg2.connect(
+                dbname=self.dbname, user=self.user, password=self.password, host=self.host, port=self.port
+            )
             with conn.cursor() as cur:
                 cur.execute(query, (
                     datetime.now(),
@@ -37,7 +43,8 @@ class ArbitrageAnalyzer:
                     ex_sell.upper(),
                     buy_price,
                     sell_price,
-                    round(spread, 2)
+                    round(spread, 2),
+                   round(volume_24h, 2)
                 ))
             conn.commit()
         except Exception as db_err:
@@ -46,13 +53,14 @@ class ArbitrageAnalyzer:
             if conn:
                 conn.close()
 
-    def calculate_spot_spread(
+    async def calculate_spot_spread(
         self,
         symbol: str,
         exchange_a_name: str,
         orderbook_a: dict,
         exchange_b_name: str,
         orderbook_b: dict,
+        volume_24h: float,  # 🔥 Передаем объем для анализа и логирования
         base_volume: float = 500.0,
         min_spread_pct: float = 0.5,
         max_spread_pct: float = 15.0,
@@ -83,23 +91,24 @@ class ArbitrageAnalyzer:
             if net_spread_pct >= min_spread_pct:
                 profit_usdt = (base_volume * (net_spread_pct / 100.0))
                 
-                # 1. Вывод в консоль
-                print(f"🔥 [СИГНАЛ] Найдена связка {symbol}!")
+                # 1. Вывод в консоль с объемом
+                print(f"🔥 [СИГНАЛ] Найдена связка {symbol} (24h Vol: ${volume_24h:,})!")
                 print(f"🛒 Купить [{exchange_a_name.upper()}]: {best_ask_a:.6f}")
                 print(f"💰 Продать [{exchange_b_name.upper()}]: {best_bid_b:.6f}")
                 print(f"📈 Чистый спред: +{net_spread_pct:.2f}% (+{profit_usdt:.2f} USDT)\n", flush=True)
 
-                # 2. ЗАПИСЬ В POSTGRESQL (с передачей процентов в spread_pct)
+                # 2. ЗАПИСЬ В POSTGRESQL
                 self._save_to_database(
                     symbol=symbol,
                     ex_buy=exchange_a_name,
                     ex_sell=exchange_b_name,
                     buy_price=best_ask_a,
                     sell_price=best_bid_b,
-                    spread=net_spread_pct
+                    spread=net_spread_pct,
+                    volume_24h=volume_24h
                 )
 
-                # 3. Отправка в Телеграм
+                # 3. Отправка в Телеграм через нормальный await (убрали утечку тасков)
                 if self.notifier:
                     msg = (
                         f"🚨 *АРБИТРАЖНЫЙ СИГНАЛ!*\n\n"
@@ -107,10 +116,10 @@ class ArbitrageAnalyzer:
                         f"🟢 *Купить ({exchange_a_name.upper()}):* `{best_ask_a:.6f}`\n"
                         f"🔴 *Продать ({exchange_b_name.upper()}):* `{best_bid_b:.6f}`\n\n"
                         f"📊 *Чистый спред:* `+{net_spread_pct:.2f}%` \n"
+                        f"💎 *Объем пары 24ч:* `${volume_24h:,}`\n"
                         f"💵 *Профит с {base_volume}$:* `+{profit_usdt:.2f} USDT`"
                     )
-                    import asyncio
-                    asyncio.create_task(self.notifier.send_message(msg))
+                    await self.notifier.send_message(msg)
 
         except Exception as e:
             logger.error(f"Ошибка в математике анализатора спреда: {e}")

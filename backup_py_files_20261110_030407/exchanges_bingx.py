@@ -1,15 +1,17 @@
 # Файл: exchanges/bingx.py
 import logging
-from typing import Optional
+from typing import Optional, Dict, List
+from exchanges.base import BaseExchange
 
 logger = logging.getLogger("BingXExchange")
 
-class BingXExchange:
+class BingXExchange(BaseExchange):
 	"""Коннектор для работы с API биржи BingX (Spot)"""
-	def __init__(self, network_client, base_url: str, monitored_symbols: list, api_key: str = "", api_secret: str = ""):
+	def __init__(self, network_client, base_url: str, monitored_symbols: List[str], api_key: str = "", api_secret: str = ""):
+		# 🧬 Строгое наследование базового интерфейса радара
+		super().__init__(exchange_id='bingx', base_url=base_url, monitored_symbols=monitored_symbols)
 		self.network_client = network_client
 		self.base_url = base_url.rstrip("/")
-		self.monitored_symbols = monitored_symbols
 		self.api_key = api_key
 		self.api_secret = api_secret
 
@@ -43,9 +45,15 @@ class BingXExchange:
 			raw_asks = data_block.get("asks", [])
 			raw_bids = data_block.get("bids", [])
 
-			formatted_book = {"asks": [], "bids": []}
+			formatted_book = {
+				"asks": [], 
+				"bids": [],
+				"symbol": symbol.upper(),
+				"type": "spot",
+				"spot": True
+			}
 
-			# ЮВЕЛИРНЫЙ ПАРСИНГ АСКОВ (Цены продажи)
+			# 🔥 ФИКС: Убрали break, теперь стакан наполняется на всю глубину лимита!
 			if raw_asks and isinstance(raw_asks, list):
 				for ask in raw_asks[:limit]:
 					if isinstance(ask, list) and len(ask) >= 2:
@@ -53,11 +61,9 @@ class BingXExchange:
 							price = float(ask[0])
 							amount = float(ask[1])
 							formatted_book["asks"].append([price, amount])
-							break
 						except (ValueError, TypeError):
 							continue
 
-			# ЮВЕЛИРНЫЙ ПАРСИНГ БИДОВ (Цены покупки)
 			if raw_bids and isinstance(raw_bids, list):
 				for bid in raw_bids[:limit]:
 					if isinstance(bid, list) and len(bid) >= 2:
@@ -65,7 +71,6 @@ class BingXExchange:
 							price = float(bid[0])
 							amount = float(bid[1])
 							formatted_book["bids"].append([price, amount])
-							break
 						except (ValueError, TypeError):
 							continue
 
@@ -76,3 +81,11 @@ class BingXExchange:
 		except Exception as e:
 			logger.error(f"Критическая ошибка парсинга стакана BingX для {symbol}: {e}")
 			return None
+
+	async def fetch_balances(self) -> Dict[str, float]:
+		"""Резервный метод получения балансов (при необходимости реализации приватного API)"""
+		return {"USDT": 0.0}
+
+	async def fetch_tickers(self) -> dict:
+		"""Резервный метод для получения тикеров"""
+		return {}

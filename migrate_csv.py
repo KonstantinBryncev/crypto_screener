@@ -2,8 +2,13 @@ import os
 import json
 from database.storage import DBStorage
 
+# Измени блок в начале файла migrate_csv.py
 INIT_DB_SQL = """
+-- Перестраховка: принудительно переключаемся на схему public нашей базы
+CREATE TABLE IF NOT EXISTS possible_trades (id SERIAL PRIMARY KEY);
+
 DROP TABLE IF EXISTS possible_trades CASCADE;
+
 CREATE TABLE possible_trades (
     id SERIAL PRIMARY KEY,
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -16,6 +21,7 @@ CREATE TABLE possible_trades (
     volume_24h NUMERIC
 );
 """
+
 
 
 def load_config():
