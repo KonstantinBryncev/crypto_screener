@@ -73,7 +73,7 @@ class ArbitrageAnalyzer:
 		finally:
 			conn.close()
 
-		def calculate_spot_spread(self, symbol, buy_exchange=None, sell_exchange=None, buy_price=None, sell_price=None, volume_24h=0.0, **kwargs):
+	def calculate_spot_spread(self, symbol, buy_exchange=None, sell_exchange=None, buy_price=None, sell_price=None, volume_24h=0.0, **kwargs):
 		"""
 		Рассчитывает чистый процентный спред между ценами покупки и продажи.
 		Адаптирован под любые имена аргументов из arbitrage_manager (exchange_a_name, price_a и т.д.).
@@ -84,7 +84,7 @@ class ArbitrageAnalyzer:
 			sell_exchange = sell_exchange or kwargs.get("exchange_b_name") or kwargs.get("sell_ex")
 			buy_price = buy_price if buy_price is not None else (kwargs.get("price_a") or kwargs.get("buy_p"))
 			sell_price = sell_price if sell_price is not None else (kwargs.get("price_b") or kwargs.get("sell_p"))
-			volume_24h = volume_24h or kwargs.get("volume") or 0.0
+			volume_24h = volume_24h or kwargs.get("volume") or kwargs.get("volume_24h") or 0.0
 
 			buy_price = float(buy_price)
 			sell_price = float(sell_price)
@@ -93,15 +93,11 @@ class ArbitrageAnalyzer:
 			if buy_price <= 0:
 				return None
 
-
 			# --- ЗАЩИТНЫЙ ФИЛЬТР БАГА ОКРУГЛЕНИЯ BINGX ---
-			# Если одна из сторон связки — BingX, проверяем цену на аномальные нули
 			if "bingx" in [buy_exchange.lower(), sell_exchange.lower()]:
-				# Проверяем строковое представление цены на наличие хвоста из трех нулей (например, 0.071000)
 				buy_str = f"{buy_price:.6f}"
 				sell_str = f"{sell_price:.6f}"
 				if buy_str.endswith("000") or sell_str.endswith("000"):
-					# Ложный сигнал вызванный округлением стакана — тихо игнорируем
 					return None
 
 			# Расчет математического спреда в процентах
@@ -120,7 +116,6 @@ class ArbitrageAnalyzer:
 					volume_24h=volume_24h
 				)
 				
-				# Формируем структуру ответа для вывода в консоль бота
 				return {
 					"symbol": symbol.upper(),
 					"buy_exchange": buy_exchange.upper(),
