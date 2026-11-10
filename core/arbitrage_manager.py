@@ -135,8 +135,8 @@ class ArbitrageManager:
 						if inst_id.endswith("-USDT"):
 							vol = float(item.get("volCcy24h", 0))
 							if vol >= self.min_volume_24h:
-								base = inst_id.split("-")[0]
-								pair_name = f"{base}/USDT"
+								base_coin = inst_id.split("-")[0] # <-- ИСПРАВЛЕНО: добавили [0]
+								pair_name = f"{base_coin}/USDT"
 								ex_pairs.add(pair_name)
 								temp_volumes.setdefault(pair_name, []).append(vol)
 								
@@ -148,8 +148,8 @@ class ArbitrageManager:
 							if symbol.endswith("-USDT"):
 								vol = float(item.get("volume", 0))
 								if vol >= self.min_volume_24h:
-									base = symbol.split("-")[0]
-									pair_name = f"{base}/USDT"
+									base_coin = symbol.split("-")[0] # <-- ИСПРАВЛЕНО: добавили [0]
+									pair_name = f"{base_coin}/USDT"
 									ex_pairs.add(pair_name)
 									temp_volumes.setdefault(pair_name, []).append(vol)
 								
@@ -160,8 +160,8 @@ class ArbitrageManager:
 							if currency_pair.endswith("_USDT"):
 								vol = float(item.get("quote_volume", 0) or 0)
 								if vol >= self.min_volume_24h:
-									base = currency_pair.split("_")[0]
-									pair_name = f"{base}/USDT"
+									base_coin = currency_pair.split("_")[0] # <-- ИСПРАВЛЕНО: добавили [0]
+									pair_name = f"{base_coin.upper()}/USDT"
 									ex_pairs.add(pair_name)
 									temp_volumes.setdefault(pair_name, []).append(vol)
 									
@@ -171,10 +171,11 @@ class ArbitrageManager:
 						if symbol.endswith("-USDT"):
 							vol = float(item.get("volValue", 0))
 							if vol >= self.min_volume_24h:
-								base = symbol.split("-")[0]
-								pair_name = f"{base}/USDT"
+								base_coin = symbol.split("-")[0] # <-- ИСПРАВЛЕНО: добавили [0]
+								pair_name = f"{base_coin}/USDT"
 								ex_pairs.add(pair_name)
 								temp_volumes.setdefault(pair_name, []).append(vol)
+
 				
 				if ex_pairs:
 					all_sets.append(ex_pairs)
