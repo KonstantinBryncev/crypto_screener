@@ -5,38 +5,27 @@ class ArbitrageAnalyzer:
 	"""
 	Модуль математического анализа межбиржевого спреда.
 	Рассчитывает чистую прибыль с учетом комиссий и сохраняет сигналы в PostgreSQL.
-	Все параметры и доступы динамически импортируются из конфигурационного файла.
 	"""
 	def __init__(self, config: dict = None):
 		self.notifier = None
-		# Извлекаем параметры базы данных из общего конфигурационного файла
 		db_config = config.get("postgres", {}) if config else {}
 		
-		# Задаем имя базы данных строго по конфигурации (с дефолтом на crypto_db)
 		self.dbname = db_config.get("dbname") or "crypto_db"
 		self.user = db_config.get("user") or "postgres"
 		self.password = db_config.get("password") or "CryptoDB_2026_Secure"
 		
-		# Предотвращаем конфликты локальных сокетов: localhost подменяем на сетевой IP
 		host_val = db_config.get("host") or "127.0.0.1"
 		self.host = "127.0.0.1" if host_val == "localhost" else host_val
-		
 		self.port = int(db_config.get("port") or 5432)
 		
-		# Загружаем настройки фильтрации спреда из конфига (по умолчанию 0.5%)
-		bot_settings = config.get("bot_settings", {}) if config else {}
-		self.min_spread_pct = float(bot_settings.get("min_spread_pct") or 0.5)
+		# 🎯 ИСПРАВЛЕНИЕ: Читаем из правильной секции "arbitrage"
+		arb_settings = config.get("arbitrage", {}) if config else {}
+		self.min_spread_pct = float(arb_settings.get("min_spread_percent") or 0.5)
 
 	def set_notifier(self, notifier):
-		"""
-		Установка модуля уведомлений (например, для Telegram).
-		"""
 		self.notifier = notifier
 
 	def _get_connection(self):
-		"""
-		Внутренний метод создания безопасного подключения к PostgreSQL.
-		"""
 		return psycopg2.connect(
 			dbname=self.dbname,
 			user=self.user,
@@ -46,9 +35,6 @@ class ArbitrageAnalyzer:
 		)
 
 	def _save_to_database(self, symbol, buy_ex, sell_ex, buy_p, sell_p, spread_pct, volume_24h):
-		"""
-		Безопасная запись верифицированного сигнала в таблицу possible_trades.
-		"""
 		sql = """
 			INSERT INTO possible_trades 
 			(timestamp, symbol, buy_exchange, sell_exchange, buy_price, sell_price, spread_pct, volume_24h)
@@ -74,34 +60,23 @@ class ArbitrageAnalyzer:
 			conn.close()
 
 	async def calculate_spot_spread(self, symbol, buy_exchange=None, sell_exchange=None, buy_price=None, sell_price=None, volume_24h=0.0, **kwargs):
-		"""
-		Рассчитывает чистый процентный спред между ценами покупки и продажи.
-		МЕТОД АСИНХРОННЫЙ (async), чтобы менеджер мог успешно использовать его через await.
-		"""
 		try:
-			# 1. Извлекаем биржу покупки (все возможные варианты ключей)
-			buy_ex = buy_exchange or kwargs.get("exchange_a_name") or kwargs.get("buy_ex") or kwargs.get("exchange_buy") or kwargs.get("buy_exchange")
-			# 2. Извлекаем биржу продажи
-			sell_ex = sell_exchange or kwargs.get("exchange_b_name") or kwargs.get("sell_ex") or kwargs.get("exchange_sell") or kwargs.get("sell_exchange")
+			buy_ex = buy_exchange or kwargs.get("exchange_a_name") or kwargs.get("buy_ex") or kwargs.get("exchange_buy")
+			sell_ex = sell_exchange or kwargs.get("exchange_b_name") or kwargs.get("sell_ex") or kwargs.get("exchange_sell")
 			
-			# 3. Извлекаем цену покупки (ищем по всем возможным названиям полей в проекте)
 			b_price = buy_price
 			if b_price is None:
-				b_price = kwargs.get("price_a") or kwargs.get("buy_price") or kwargs.get("buy_p") or kwargs.get("ask") or kwargs.get("ask_price")
+				b_price = kwargs.get("price_a") or kwargs.get("buy_price") or kwargs.get("buy_p") or kwargs.get("ask")
 
-			# 4. Извлекаем цену продажи
 			s_price = sell_price
 			if s_price is None:
-				s_price = kwargs.get("price_b") or kwargs.get("sell_price") or kwargs.get("sell_p") or kwargs.get("bid") or kwargs.get("bid_price")
+				s_price = kwargs.get("price_b") or kwargs.get("sell_price") or kwargs.get("sell_p") or kwargs.get("bid")
 
-			# 5. Извлекаем объем торгов
-			vol_24h = volume_24h or kwargs.get("volume") or kwargs.get("volume_24h") or kwargs.get("vol") or 0.0
+			vol_24h = volume_24h or kwargs.get("volume") or kwargs.get("volume_24h") or 0.0
 
-			# Защитная проверка: если цены не распознались, возвращаем пустой словарь, чтобы await не падал
 			if b_price is None or s_price is None or buy_ex is None or sell_ex is None:
 				return {}
 
-			# Преобразование типов данных
 			buy_price_float = float(b_price)
 			sell_price_float = float(s_price)
 			volume_24h_float = float(vol_24h)
@@ -109,19 +84,18 @@ class ArbitrageAnalyzer:
 			if buy_price_float <= 0:
 				return {}
 
-			# --- ЗАЩИТНЫЙ ФИЛЬТР БАГА ОКРУГЛЕНИЯ BINGX ---
 			if "bingx" in [str(buy_ex).lower(), str(sell_ex).lower()]:
 				buy_str = f"{buy_price_float:.6f}"
 				sell_str = f"{sell_price_float:.6f}"
 				if buy_str.endswith("000") or sell_str.endswith("000"):
 					return {}
 
-			# Расчет математического спреда в процентах
 			spread_pct = ((sell_price_float - buy_price_float) / buy_price_float) * 100
 
-			# Фильтрация по минимальному порогу спреда из config_bot.json
-			if spread_pct >= self.min_spread_pct:
-				# Сохраняем верифицированный сигнал в базу данных
+			# 🎯 ИСПРАВЛЕНИЕ: Приоритет отдаем значению динамического вызова, если оно передано менеджером
+			filter_threshold = kwargs.get("min_spread_pct", self.min_spread_pct)
+
+			if spread_pct >= filter_threshold:
 				self._save_to_database(
 					symbol=symbol,
 					buy_ex=buy_ex,
