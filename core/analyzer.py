@@ -73,10 +73,10 @@ class ArbitrageAnalyzer:
 		finally:
 			conn.close()
 
-	def calculate_spot_spread(self, symbol, buy_exchange=None, sell_exchange=None, buy_price=None, sell_price=None, volume_24h=0.0, **kwargs):
+	async def calculate_spot_spread(self, symbol, buy_exchange=None, sell_exchange=None, buy_price=None, sell_price=None, volume_24h=0.0, **kwargs):
 		"""
 		Рассчитывает чистый процентный спред между ценами покупки и продажи.
-		Максимально адаптирован под любые варианты аргументов из arbitrage_manager.
+		МЕТОД АСИНХРОННЫЙ (async), чтобы менеджер мог успешно использовать его через await.
 		"""
 		try:
 			# 1. Извлекаем биржу покупки (все возможные варианты ключей)
@@ -97,11 +97,9 @@ class ArbitrageAnalyzer:
 			# 5. Извлекаем объем торгов
 			vol_24h = volume_24h or kwargs.get("volume") or kwargs.get("volume_24h") or kwargs.get("vol") or 0.0
 
-			# Защитная проверка: если цены так и не нашлись в переданных аргументах, пропускаем пару без падения скрипта
+			# Защитная проверка: если цены не распознались, возвращаем пустой словарь, чтобы await не падал
 			if b_price is None or s_price is None or buy_ex is None or sell_ex is None:
-				# Для отладки раскомментируй строку ниже, чтобы увидеть реальные ключи, если опять пустые прилетят:
-				# print(f"ℹ️ [DEBUG KEYS]: Прилетели аргументы без цен для {symbol}: {kwargs.keys()}")
-				return None
+				return {}
 
 			# Преобразование типов данных
 			buy_price_float = float(b_price)
@@ -109,14 +107,14 @@ class ArbitrageAnalyzer:
 			volume_24h_float = float(vol_24h)
 			
 			if buy_price_float <= 0:
-				return None
+				return {}
 
 			# --- ЗАЩИТНЫЙ ФИЛЬТР БАГА ОКРУГЛЕНИЯ BINGX ---
 			if "bingx" in [str(buy_ex).lower(), str(sell_ex).lower()]:
 				buy_str = f"{buy_price_float:.6f}"
 				sell_str = f"{sell_price_float:.6f}"
 				if buy_str.endswith("000") or sell_str.endswith("000"):
-					return None
+					return {}
 
 			# Расчет математического спреда в процентах
 			spread_pct = ((sell_price_float - buy_price_float) / buy_price_float) * 100
@@ -147,4 +145,4 @@ class ArbitrageAnalyzer:
 		except Exception as e:
 			print(f"🚨 [ANALYZER ERROR]: Ошибка при расчете спреда для {symbol}: {e}")
 			
-		return None
+		return {}
