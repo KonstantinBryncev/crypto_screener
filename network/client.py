@@ -136,11 +136,14 @@ class AsyncHttpClient:
 		session = await self.get_session()
 		try:
 			async with session.request(method, url, timeout=4, **kwargs) as response:
-				# 🎯 ТОПОРНЫЙ ВЫВОД СТАТУСА ТРАФИКА
-				print(f"📡 [ОТЛАДКА ТРАФИКА] Запрос к {url[:35]}... -> HTTP Статус: {response.status}")
+				# 🎯 ОПТИМИЗАЦИЯ: Выводим в консоль только блокировки, чтобы не спамить экран
+				if response.status in:
+					print(f"📡 [СЕТЬ ВАРНИНГ] Обнаружен блок на {url[:30]}... -> Статус: {response.status}")
+				
 				if response.status == 200:
 					return await response.json()
 				return None
+
 		except Exception as e:
 			print(f"🚨 [ОТЛАДКА ТРАФИКА] Ошибка запроса к {url[:35]}...: {e}")
 			return None
