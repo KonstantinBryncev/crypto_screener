@@ -41,7 +41,7 @@ class ArbitrageManager:
 			self.min_cycle_sleep = float(arb_config["min_cycle_sleep_seconds"])
 			self.error_retry_delay = float(arb_config["error_retry_delay_seconds"])
 			self.orderbook_limit = int(arb_config["orderbook_limit"])
-
+			self.max_price_deviation_pct = float(self.arb_config["max_price_deviation_pct"])
 			net_config = config["network"]
 			self.tunnel_refresh_interval = float(net_config["tunnel_refresh_seconds"])
 								#>>>>>>LET'S DEBUG<<<<<<<
@@ -276,57 +276,80 @@ class ArbitrageManager:
 
 
 	async def _scan_single_symbol(self, symbol: str):
-			try:
-				orderbooks = {}
-				# Берем глубину стакана строго из self.orderbook_limit (загружено из config/config.py)
-				tasks = {
-					exch_id: exch_obj.fetch_order_book(symbol, limit=self.orderbook_limit)
-					for exch_id, exch_obj in self.exchanges.items()
-				}
-				results = await asyncio.gather(*tasks.values(), return_exceptions=True)
-				
-				for exch_id, orderbook in zip(tasks.keys(), results):
-					if isinstance(orderbook, Exception):
-						continue
-					if orderbook and (orderbook.get("asks") or orderbook.get("bids")):
-						orderbooks[exch_id] = orderbook
-						
-				if len(orderbooks) >= 2:
-					exch_names = list(orderbooks.keys())
-					pair_volume = self.symbols_volumes.get(symbol, 0.0)
-					
-					for i in range(len(exch_names)):
-						for j in range(i + 1, len(exch_names)):
-							ex_a, ex_b = exch_names[i], exch_names[j]
-							
-							# 🧬 Запускаем расчет математического спреда
-							res = await self.analyzer.calculate_spot_spread(
-								symbol=symbol, 
-								exchange_a_name=ex_a, 
-								orderbook_a=orderbooks[ex_a],
-								exchange_b_name=ex_b, 
-								orderbook_b=orderbooks[ex_b],
-								volume_24h=pair_volume,
-								base_volume=self.base_volume, 
-								min_spread_pct=self.min_spread,
-								max_spread_pct=self.max_spread, 
-								trade_fee_pct=self.trade_fee
-							)
+		try:
+			orderbooks = {}
+			# Берем глубину стакана строго из self.orderbook_limit (загружено из config/config.py)
+			tasks = {
+				exch_id: exch_obj.fetch_order_book(symbol, limit=self.orderbook_limit)
+				for exch_id, exch_obj in self.exchanges.items()
+			}
+			results = await asyncio.gather(*tasks.values(), return_exceptions=True)
 
-							if res and isinstance(res, dict) and "spread_pct" in res:
-								# ТВОЙ ПРЯМОЙ ВЫВОД СИГНАЛА ПО МЕСТУ БЕЗ ЛИШНИХ ФАЙЛОВ:
-								print("\n" + "🔥" * 20)
-								print(f"💰 [АРБИТРАЖНЫЙ СИГНАЛ] Найдена связка!")
-								print(f"   -> Монета: {res['symbol']}")
-								print(f"   -> Направление: [{res['buy_exchange'].upper()} -> {res['sell_exchange'].upper()}]")
-								print(f"   -> Спред: {res['spread_pct']}%")
-								print(f"   -> Математика: Купить по {res['buy_price']} | Продать по {res['sell_price']}")
-								print(f"   -> Суточный объем: ${res['volume_24h']:.0f}")
-								print("🔥" * 20 + "\n")
+			for exch_id, orderbook in zip(tasks.keys(), results):
+				if isinstance(orderbook, Exception):
+					continue
+				# Проверяем, что в стакане есть обе стороны (asks и bids)
+				if orderbook and orderbook.get("asks") and orderbook.get("bids"):
+					orderbooks[exch_id] = orderbook
 
-			except Exception as scan_err:
-				# Фиксируем любую ошибку при сканировании монеты в bot_errors.log вместо молчаливого pass
-				logger.error(f"🚨 [СКАНЕР] Ошибка при сканировании монеты {symbol}: {scan_err}")
+			# Отсекаем биржи с зависшими ценами / закрытыми кошельками по отклонению от медианы рынка
+			if len(orderbooks) >= 3:
+				mid_prices = {}
+				idx = 0
+				for ex_name, ob in orderbooks.items():
+					best_ask = ob["asks"][idx][idx]
+					best_bid = ob["bids"][idx][idx]
+					mid_prices[ex_name] = (best_ask + best_bid) / 2.0
+
+				sorted_prices = sorted(mid_prices.values())
+				median_price = sorted_prices[len(sorted_prices) // 2]
+
+				filtered_orderbooks = {}
+				for ex_name, ob in orderbooks.items():
+					dev_pct = abs(mid_prices[ex_name] - median_price) / median_price * 100.0
+					if dev_pct <= self.max_price_deviation_pct:
+						filtered_orderbooks[ex_name] = ob
+
+				orderbooks = filtered_orderbooks
+
+			if len(orderbooks) < 2:
+				return
+
+			exch_names = list(orderbooks.keys())
+			pair_volume = self.symbols_volumes.get(symbol, 0.0)
+
+			for i in range(len(exch_names)):
+				for j in range(i + 1, len(exch_names)):
+					ex_a, ex_b = exch_names[i], exch_names[j]
+
+					# Запускаем расчет математического спреда по глубине стакана
+					res = await self.analyzer.calculate_spot_spread(
+						symbol=symbol,
+						exchange_a_name=ex_a,
+						orderbook_a=orderbooks[ex_a],
+						exchange_b_name=ex_b,
+						orderbook_b=orderbooks[ex_b],
+						volume_24h=pair_volume,
+						base_volume=self.base_volume,
+						min_spread_pct=self.min_spread,
+						max_spread_pct=self.max_spread,
+						trade_fee_pct=self.trade_fee
+					)
+
+					if res and isinstance(res, dict) and "spread_pct" in res:
+						# Прямой вывод сигнала в консоль
+						print("\n" + "🔥" * 20, flush=True)
+						print(f"🚨 [АРБИТРАЖНЫЙ СИГНАЛ] Найдена связка!", flush=True)
+						print(f"   -> Монета: {res['symbol']}", flush=True)
+						print(f"   -> Направление: [{res['buy_exchange'].upper()} -> {res['sell_exchange'].upper()}]", flush=True)
+						print(f"   -> Спред: {res['spread_pct']}%", flush=True)
+						print(f"   -> Математика: Купить по {res['buy_price']:.8g} | Продать по {res['sell_price']:.8g}", flush=True)
+						print(f"   -> Суточный объем: ${pair_volume:.0f} | Объем сделки: ${self.base_volume}", flush=True)
+						print("=" * 40 + "\n", flush=True)
+
+		except Exception as scan_err:
+			# Фиксируем любую ошибку при сканировании монеты в bot_errors.log вместо молчаливого pass
+			logger.error(f"🚨 [СКАНЕР] Ошибка при сканировании монеты {symbol}: {scan_err}")
 
 	async def stop(self):
 		print("\n🛑 [МЕНЕДЖЕР] Остановка сканера и закрытие сетевого туннеля...", flush=True)
