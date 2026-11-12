@@ -1,0 +1,86 @@
+{
+    "log": {
+        "loglevel": "warning"
+    },
+    "dns": {
+        "disableCache": false,
+        "disableFallback": true,
+        "servers": [
+            {
+                "address": "https://1.1.1.1",
+                "port": 53,
+                "outbound": "proxy"
+            }
+        ]
+    },
+    "inbounds": [
+        {
+            "port": 52115,
+            "listen": "127.0.0.1",
+            "protocol": "socks",
+            "settings": {
+                "auth": "noauth",
+                "udp": true
+            },
+            "sniffing": {
+                "enabled": true,
+                "destOverride": [
+                    "http",
+                    "tls",
+                    "quic"
+                ],
+                "metadataOnly": false
+            }
+        }
+    ],
+    "outbounds": [
+        {
+            "tag": "proxy",
+            "protocol": "vless",
+            "settings": {
+                "vnext": [
+                    {
+                        "address": "92.60.78.221",
+                        "port": 443,
+                        "users": [
+                            {
+                                "id": "6897c181-24b1-4880-8660-e6c5c7ee13c7",
+                                "encryption": "none",
+                                "flow": "xtls-rprx-vision"
+                            }
+                        ]
+                    }
+                ]
+            },
+            "streamSettings": {
+                "network": "tcp",
+                "security": "reality",
+                "realitySettings": {
+                    "show": false,
+                    "serverName": "www.tradingview.com",
+                    "publicKey": "pkIWxbuPAasjatPaHnAaTnCxVj1RkDFsJEWpLUTOcWY",
+                    "shortId": "9917d2350096",
+                    "fingerprint": "chrome"
+                }
+            }
+        },
+        {
+            "tag": "direct",
+            "protocol": "freedom",
+            "settings": {}
+        }
+    ],
+    "routing": {
+        "domainStrategy": "AsIs",
+        "rules": [
+            {
+                "type": "field",
+                "inboundTag": [
+                    "socks"
+                ],
+                "port": 53,
+                "outboundTag": "proxy"
+            }
+        ]
+    }
+}

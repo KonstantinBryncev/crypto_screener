@@ -1,5 +1,5 @@
 # Конфигурация с приватными API-ключами и VLESS-ссылкой
-config/config_bot.json
+config/config.py
 config/vpn_setting.json
 config.json
 

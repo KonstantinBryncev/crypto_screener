@@ -1,97 +1,87 @@
-import asyncio
+# Файл: exchanges/okx.py
 import logging
 import time
-import hmac
-import hashlib
-import base64
-import datetime
-from typing import Dict, Any, List, Optional
+from typing import List, Optional
 from exchanges.base import BaseExchange
 
 logger = logging.getLogger("OkxExchange")
 
+
 class OkxExchange(BaseExchange):
-	def __init__(self, network_client, base_url: str, monitored_symbols: List[str], api_key: str = "", api_secret: str = "", api_passphrase: str = ""):
-		super().__init__(exchange_id='okx', base_url=base_url, monitored_symbols=monitored_symbols)
+	"""Публичный коннектор для сканирования спотовых стаканов OKX (API v5)."""
+
+	def __init__(self, network_client, base_url: str, monitored_symbols: List[str]):
+		super().__init__(exchange_id="okx", base_url=base_url, monitored_symbols=monitored_symbols)
 		self.network_client = network_client
-		self.api_key = api_key
-		self.api_secret = api_secret
-		self.api_passphrase = api_passphrase
+		self.base_url = base_url.rstrip("/")
 
-	async def init_exchange(self):
-		print(f"✅ [OKX] Успешно инициализирован хост: {self.base_url}")
+	async def init_exchange(self) -> bool:
+		print(f"✅ [OKX] Успешно инициализирован хост: {self.base_url}", flush=True)
+		return True
 
-	def _generate_signature(self, timestamp: str, method: str, request_path: str, body: str = "") -> str:
-		message = timestamp + method + request_path + body
-		mac = hmac.new(self.api_secret.encode('utf-8'), message.encode('utf-8'), hashlib.sha256)
-		return base64.b64encode(mac.digest()).decode('utf-8')
+	async def fetch_order_book(self, symbol: str, limit: int) -> Optional[dict]:
+		"""
+		Запрашивает и парсит спотовый стакан OKX v5.
+		Приводит уровни к числам float и гарантирует правильную сортировку.
+		"""
+		okx_pair = symbol.upper().replace("/", "-")
+		url = f"{self.base_url}/api/v5/market/books"
+		params = {"instId": okx_pair, "sz": str(limit)}
 
-	def _create_auth_headers(self, method: str, request_path: str, body: str = "") -> Dict[str, str]:
-		now = datetime.datetime.now(datetime.timezone.utc)
-		timestamp = now.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
-		signature = self._generate_signature(timestamp, method, request_path, body)
-		return {
-			"OK-ACCESS-KEY": self.api_key,
-			"OK-ACCESS-SIGN": signature,
-			"OK-ACCESS-TIMESTAMP": timestamp,
-			"OK-ACCESS-PASSPHRASE": self.api_passphrase,
-			"Content-Type": "application/json"
-		}
-
-	async def fetch_order_book(self, symbol: str, limit: int = 5) -> Optional[dict]:
 		try:
-			okx_pair = symbol.upper().replace('/', '-')
-			# OKX строго требует sz равным 1, 5 или 20. Фиксируем "5":
-			resource_path = "/api/v5/market/books"
-			url = f"{self.base_url}{resource_path}"
-			params = {"instId": okx_pair, "sz": "5"}
-			
 			raw_response = await self.network_client.fetch_json(url=url, method="GET", params=params)
-			
-			if not raw_response or not isinstance(raw_response, dict) or raw_response.get('code') != '0':
+
+			if not raw_response or not isinstance(raw_response, dict):
 				return None
-				
-			data_list = raw_response.get('data', [])
-			if not data_list:
+
+			if str(raw_response.get("code")) != "0":
+				logger.warning(
+					f"⚠️ [OKX] Ошибка API при запросе стакана {symbol}: "
+					f"code={raw_response.get('code')}, msg={raw_response.get('msg')}"
+				)
 				return None
-				
-			data = data_list[0]
+
+			data_list = raw_response.get("data", [])
+			if not data_list or not isinstance(data_list, list):
+				return None
+
+			idx_first = 0
+			idx_price = 0
+			idx_amount = 1
+			data = data_list[idx_first]
+
+			parsed_asks = []
+			parsed_bids = []
+
+			for item in data.get("asks", []):
+				if isinstance(item, list) and len(item) >= 2:
+					price = float(item[idx_price])
+					amount = float(item[idx_amount])
+					if price > 0 and amount > 0:
+						parsed_asks.append([price, amount])
+
+			for item in data.get("bids", []):
+				if isinstance(item, list) and len(item) >= 2:
+					price = float(item[idx_price])
+					amount = float(item[idx_amount])
+					if price > 0 and amount > 0:
+						parsed_bids.append([price, amount])
+
+			if not parsed_asks or not parsed_bids:
+				return None
+
+			# Сортируем asks от дешевых к дорогим, bids — от дорогих к дешевым
+			parsed_asks.sort(key=lambda x: x[idx_price])
+			parsed_bids.sort(key=lambda x: x[idx_price], reverse=True)
+
 			return {
-				'bids': [[float(item[0]), float(item[1])] for item in data.get('bids', []) if item],
-				'asks': [[float(item[0]), float(item[1])] for item in data.get('asks', []) if item],
-				'symbol': symbol.upper(),
-				'timestamp': int(data.get('ts', time.time() * 1000)),
-				'type': 'spot',
-				'spot': True
+				"bids": parsed_bids[:limit],
+				"asks": parsed_asks[:limit],
+				"symbol": symbol.upper(),
+				"timestamp": int(data.get("ts", time.time() * 1000)),
+				"type": "spot",
+				"spot": True
 			}
 		except Exception as e:
-			logger.debug(f"Сбой OKX для {symbol}: {e}")
+			logger.error(f"🚨 [OKX] Ошибка парсинга стакана для {symbol}: {e}")
 			return None
-
-	async def fetch_balances(self) -> Dict[str, float]:
-		if not self.api_key or not self.api_secret or not self.api_passphrase:
-			return {"USDT": 0.0}
-		resource_path = "/api/v5/account/balance"
-		url = f"{self.base_url}{resource_path}"
-		headers = self._create_auth_headers("GET", resource_path)
-		raw_response = await self.network_client.fetch_json(url=url, method="GET", headers=headers)
-		balances = {"USDT": 0.0}
-		if not raw_response or not isinstance(raw_response, dict) or raw_response.get('code') != '0':
-			return balances
-		try:
-			data_list = raw_response.get('data', [])
-			if not data_list:
-				return balances
-			details = data_list[0].get('details', [])
-			for coin_info in details:
-				asset_name = coin_info.get('ccy', '').upper()
-				available_amount = float(coin_info.get('availBal', 0.0))
-				if available_amount > 0:
-					balances[asset_name] = available_amount
-			return balances
-		except Exception as e:
-			logger.error(f"Ошибка парсинга балансов OKX: {e}")
-			return balances
-
-	async def fetch_tickers(self) -> dict:
-		return {}

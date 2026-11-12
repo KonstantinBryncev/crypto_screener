@@ -1,6 +1,6 @@
 import os
 import json
-from database.storage import DBStorage
+from storage import DBStorage
 
 # Измени блок в начале файла migrate_csv.py
 INIT_DB_SQL = """
