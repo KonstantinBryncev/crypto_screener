@@ -85,7 +85,7 @@ class AsyncHttpClient:
 			return {}
 
 	def _build_xray_config(self, parsed_data: dict) -> dict:
-		"""Генерирует JSON-конфигурацию Xray под Reality-туннель."""
+		"""Генерирует JSON-конфигурацию Xray под Reality, TLS, WS и XHTTP."""
 		params = parsed_data["params"]
 		outbound_tag = "proxy"
 
@@ -105,12 +105,15 @@ class AsyncHttpClient:
 			}]
 		}
 
+		net_type = params.get("type", "tcp")
+		sec_type = params.get("security", "none")
+
 		stream_settings = {
-			"network": params.get("type", "tcp"),
-			"security": params.get("security", "none")
+			"network": net_type,
+			"security": sec_type
 		}
 
-		if params.get("security") == "reality":
+		if sec_type == "reality":
 			stream_settings["realitySettings"] = {
 				"show": False,
 				"serverName": params.get("sni", ""),
@@ -118,6 +121,40 @@ class AsyncHttpClient:
 				"shortId": params.get("sid", ""),
 				"fingerprint": params.get("fp", "chrome")
 			}
+		elif sec_type == "tls":
+			tls_settings = {
+				"serverName": params.get("sni", params.get("host", "")),
+				"fingerprint": params.get("fp", "chrome"),
+				"allowInsecure": False
+			}
+			if params.get("alpn"):
+				tls_settings["alpn"] = [a.strip() for a in str(params.get("alpn")).split(",") if a.strip()]
+			stream_settings["tlsSettings"] = tls_settings
+
+		if net_type == "ws":
+			raw_path = unquote(str(params.get("path", "/"))).strip()
+			if not raw_path.startswith("/"):
+				raw_path = "/" + raw_path
+			ws_settings = {"path": raw_path}
+			if params.get("host"):
+				ws_settings["headers"] = {"Host": str(params.get("host"))}
+			stream_settings["wsSettings"] = ws_settings
+		elif net_type == "xhttp":
+			raw_path = unquote(str(params.get("path", "/"))).strip()
+			if not raw_path.startswith("/"):
+				raw_path = "/" + raw_path
+			xhttp_settings = {
+				"path": raw_path,
+				"mode": str(params.get("mode", "auto"))
+			}
+			if params.get("host"):
+				xhttp_settings["host"] = str(params.get("host"))
+			if params.get("extra"):
+				try:
+					xhttp_settings["extra"] = json.loads(unquote(str(params.get("extra"))))
+				except Exception:
+					pass
+			stream_settings["xhttpSettings"] = xhttp_settings
 
 		dns_config = {
 			"disableCache": False,
@@ -145,6 +182,7 @@ class AsyncHttpClient:
 			}
 		}
 
+
 	async def _stop_xray_process(self):
 		"""Останавливает текущий процесс Xray перед перезапуском или выходом."""
 		if self.xray_process:
@@ -163,16 +201,18 @@ class AsyncHttpClient:
 			os.system("pkill -f xray 2>/dev/null")
 
 	async def _probe_tunnel_connection(self) -> bool:
-		"""Проверяет реальную проходимость трафика через локальный SOCKS5-порт Xray."""
 		proxy_url = f"socks5://127.0.0.1:{self.socks_port}"
 		timeout = aiohttp.ClientTimeout(total=self.tunnel_probe_timeout)
+		connector = ProxyConnector.from_url(proxy_url)
 		try:
-			connector = ProxyConnector.from_url(proxy_url)
 			async with aiohttp.ClientSession(connector=connector, timeout=timeout) as probe_session:
 				async with probe_session.get(self.tunnel_test_url) as resp:
 					return resp.status == 200
 		except Exception:
 			return False
+		finally:
+			await connector.close()
+
 
 
 
