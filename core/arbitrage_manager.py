@@ -33,7 +33,8 @@ class ArbitrageManager:
 			self.max_spread = float(arb_config["max_spread_percent"])
 			self.trade_fee = float(arb_config["trade_fee_percent"])
 			self.min_volume_24h = float(arb_config["min_volume_24h_usdt"])
-
+			self.signal_cooldown_seconds = int(arb_config["signal_cooldown_seconds"])
+			self.signal_cooldowns = {}
 			# Параметры главного цикла сканирования (строго из конфига, без хардкода)
 			self.batch_size = int(arb_config["batch_size"])
 			self.batch_timeout = float(arb_config["batch_timeout_seconds"])
@@ -41,7 +42,7 @@ class ArbitrageManager:
 			self.min_cycle_sleep = float(arb_config["min_cycle_sleep_seconds"])
 			self.error_retry_delay = float(arb_config["error_retry_delay_seconds"])
 			self.orderbook_limit = int(arb_config["orderbook_limit"])
-			self.max_price_deviation_pct = float(self.arb_config["max_price_deviation_pct"])
+			self.max_price_deviation_pct = float(arb_config["max_price_deviation_pct"])
 			net_config = config["network"]
 			self.tunnel_refresh_interval = float(net_config["tunnel_refresh_seconds"])
 								#>>>>>>LET'S DEBUG<<<<<<<
@@ -337,6 +338,30 @@ class ArbitrageManager:
 					)
 
 					if res and isinstance(res, dict) and "spread_pct" in res:
+						# Формируем уникальный ключ связки: Монета + Биржа покупки + Биржа продажи
+						pair_key = (res["symbol"], res["buy_exchange"], res["sell_exchange"])
+						now_ts = time.time()
+						last_signal_ts = self.signal_cooldowns.get(pair_key, 0.0)
+
+						# Если с момента прошлого сигнала по этой связке прошло меньше заданного времени — пропускаем
+						if now_ts - last_signal_ts < self.signal_cooldown_seconds:
+							continue
+
+						# Обновляем таймер кулдауна для этой связки
+						self.signal_cooldowns[pair_key] = now_ts
+
+						# Записываем в PostgreSQL один раз в час вместе с выводом в консоль
+						self.analyzer.db.save_possible_trade(
+							symbol=res["symbol"],
+							buy_ex=res["buy_exchange"],
+							sell_ex=res["sell_exchange"],
+							buy_p=res["buy_price"],
+							sell_p=res["sell_price"],
+							spread_pct=res["spread_pct"],
+							volume_24h=res["volume_24h"]
+						)
+
+
 						# Прямой вывод сигнала в консоль
 						print("\n" + "🔥" * 20, flush=True)
 						print(f"🚨 [АРБИТРАЖНЫЙ СИГНАЛ] Найдена связка!", flush=True)
@@ -346,6 +371,7 @@ class ArbitrageManager:
 						print(f"   -> Математика: Купить по {res['buy_price']:.8g} | Продать по {res['sell_price']:.8g}", flush=True)
 						print(f"   -> Суточный объем: ${pair_volume:.0f} | Объем сделки: ${self.base_volume}", flush=True)
 						print("=" * 40 + "\n", flush=True)
+
 
 		except Exception as scan_err:
 			# Фиксируем любую ошибку при сканировании монеты в bot_errors.log вместо молчаливого pass

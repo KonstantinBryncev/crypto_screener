@@ -203,15 +203,6 @@ class ArbitrageAnalyzer:
 					}
 
 			if final_res:
-				self.db.save_possible_trade(
-					symbol=final_res["symbol"],
-					buy_ex=final_res["buy_exchange"],
-					sell_ex=final_res["sell_exchange"],
-					buy_p=final_res["buy_price"],
-					sell_p=final_res["sell_price"],
-					spread_pct=final_res["spread_pct"],
-					volume_24h=final_res["volume_24h"]
-				)
 				return final_res
 
 
