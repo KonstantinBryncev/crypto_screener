@@ -2,6 +2,7 @@
 config/config.py
 config/vpn_setting.json
 config.json
+config_network.json
 
 # Тяжелые серверные логи и дампы данных
 *.log

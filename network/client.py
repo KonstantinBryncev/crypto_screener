@@ -40,6 +40,9 @@ class AsyncHttpClient:
 			self.enable_tunnel_on_windows = bool(self.net_config["enable_tunnel_on_windows"])
 			self.http_total_timeout = float(self.net_config["http_total_timeout"])
 			self.http_connect_timeout = float(self.net_config["http_connect_timeout"])
+			self.tunnel_test_url = str(self.net_config["tunnel_test_url"])
+			self.tunnel_probe_timeout = float(self.net_config["tunnel_probe_timeout"])
+			self.tunnel_max_attempts = int(self.net_config["tunnel_max_attempts"])
 		except KeyError as e:
 			raise ValueError(f"🚨 [КОНФИГ] В секции 'network' отсутствует обязательный ключ: {e}")
 
@@ -49,14 +52,14 @@ class AsyncHttpClient:
 		self.tunnel_active = False
 		self._initialized = True
 
-	def _parse_vless_link(self) -> dict:
+	def _parse_vless_link(self, raw_link: str) -> dict:
 		"""Безопасный разбор VLESS-ссылки в словарь параметров для Xray."""
 		try:
-			if not self.vless_link or not self.vless_link.startswith("vless://"):
+			if not raw_link or not raw_link.startswith("vless://"):
 				return {}
 
 			# Разделяем основную ссылку и имя конфигурации после #
-			parts = self.vless_link.split("#")
+			parts = raw_link.split("#")
 			main_part = parts[0]
 			remark = unquote(parts[1]) if len(parts) > 1 else "crypto-tunnel"
 
@@ -142,25 +145,51 @@ class AsyncHttpClient:
 			}
 		}
 
+	async def _stop_xray_process(self):
+		"""Останавливает текущий процесс Xray перед перезапуском или выходом."""
+		if self.xray_process:
+			try:
+				self.xray_process.terminate()
+				await asyncio.wait_for(self.xray_process.wait(), timeout=2.0)
+			except Exception:
+				try:
+					self.xray_process.kill()
+				except Exception:
+					pass
+			finally:
+				self.xray_process = None
+
+		if sys.platform != "win32":
+			os.system("pkill -f xray 2>/dev/null")
+
+	async def _probe_tunnel_connection(self) -> bool:
+		"""Проверяет реальную проходимость трафика через локальный SOCKS5-порт Xray."""
+		proxy_url = f"socks5://127.0.0.1:{self.socks_port}"
+		timeout = aiohttp.ClientTimeout(total=self.tunnel_probe_timeout)
+		try:
+			connector = ProxyConnector.from_url(proxy_url)
+			async with aiohttp.ClientSession(connector=connector, timeout=timeout) as probe_session:
+				async with probe_session.get(self.tunnel_test_url) as resp:
+					return resp.status == 200
+		except Exception:
+			return False
+
+
+
 	async def init_tunnel(self) -> bool:
 		"""
-		Запускает Xray-туннель на Linux VPS.
-		На Windows при enable_tunnel_on_windows=False полностью пропускает запуск и не трогает порты.
+		Запускает Xray-туннель на Linux VPS и перебирает VLESS-ключи,
+		пока не найдет реально рабочий узел.
 		"""
 		if sys.platform == "win32" and not self.enable_tunnel_on_windows:
 			self.tunnel_active = False
 			print("🖥️  [СЕТЬ] Работаем на Windows: запуск Xray-туннеля отключен в конфиге, идем напрямую.", flush=True)
 			return False
 
-		# Зачищаем старые процессы Xray на Linux-сервере
-		try:
-			if sys.platform != "win32":
-				os.system("pkill -f xray 2>/dev/null")
-				await asyncio.sleep(0.5)
-		except Exception as e:
-			logger.warning(f"⚠️ [СЕТЬ] Не удалось выполнить зачистку процессов xray: {e}")
+		await self._stop_xray_process()
+		await asyncio.sleep(0.3)
 
-		# Скачиваем актуальный VLESS-ключ из источника в config/config.py
+		lines = []
 		try:
 			timeout = aiohttp.ClientTimeout(total=self.http_total_timeout)
 			async with aiohttp.ClientSession(timeout=timeout) as download_session:
@@ -168,45 +197,65 @@ class AsyncHttpClient:
 					if resp.status == 200:
 						text_data = await resp.text()
 						lines = [line.strip() for line in text_data.split("\n") if line.strip().startswith("vless://")]
-						if lines:
-							self.vless_link = random.choice(lines)
-							logger.info(f"✅ [СЕТЬ] Загружен VLESS-ключ: {self.vless_link[:45]}...")
+					else:
+						logger.error(f"🚨 [СЕТЬ] Не удалось скачать VLESS-список: HTTP {resp.status}")
 		except Exception as e:
-			logger.error(f"🚨 [СЕТЬ] Ошибка скачивания списка VLESS: {e}")
+			logger.error(f"🚨 [СЕТЬ] Ошибка скачивания списка VLESS: {type(e).__name__}: {e}")
 
-		if not self.vless_link:
+		if not lines:
 			self.tunnel_active = False
-			logger.warning("⚠️ [СЕТЬ] VLESS-ключ не получен. Работаем напрямую без туннеля.")
+			print("🚨 [СЕТЬ] Список VLESS-ключей пуст или недоступен!", flush=True)
 			return False
 
-		config_data = self._parse_vless_link()
-		if not config_data or not config_data.get("uuid"):
-			self.tunnel_active = False
-			logger.error("🚨 [СЕТЬ] Ошибка парсинга VLESS-ссылки.")
-			return False
+		random.shuffle(lines)
+		candidates = lines[:self.tunnel_max_attempts]
+		print(f"🔍 [СЕТЬ] Загружено {len(lines)} ключей. Проверяем до {len(candidates)} кандидатов...", flush=True)
 
-		xray_json = self._build_xray_config(config_data)
-		with open(self.config_output_path, "w", encoding="utf-8") as file:
-			json.dump(xray_json, file, indent=4, ensure_ascii=False)
+		for attempt, candidate_link in enumerate(candidates, start=1):
+			config_data = self._parse_vless_link(candidate_link)
+			if not config_data or not config_data.get("uuid"):
+				continue
 
-		try:
-			self.xray_process = await asyncio.create_subprocess_exec(
-				self.xray_bin, "run", "-c", self.config_output_path,
-				stdout=asyncio.subprocess.DEVNULL,
-				stderr=asyncio.subprocess.DEVNULL
-			)
-			self.tunnel_active = True
+			xray_json = self._build_xray_config(config_data)
+			with open(self.config_output_path, "w", encoding="utf-8") as file:
+				json.dump(xray_json, file, indent=4, ensure_ascii=False)
 
-			# Если HTTP-сессия уже была создана ранее — закрываем ее, чтобы пересоздать через новый SOCKS5-порт
-			if self.session and not self.session.closed:
-				await self.session.close()
-				self.session = None
+			try:
+				self.xray_process = await asyncio.create_subprocess_exec(
+					self.xray_bin, "run", "-c", self.config_output_path,
+					stdout=asyncio.subprocess.DEVNULL,
+					stderr=asyncio.subprocess.DEVNULL
+				)
+				await asyncio.sleep(1.2)
 
-			return True
-		except Exception as e:
-			self.tunnel_active = False
-			logger.error(f"🚨 [СЕТЬ] Ошибка запуска ядра Xray: {e}")
-			return False
+				if self.xray_process.returncode is not None:
+					print(f"🚨 [СЕТЬ] Бинарник Xray завершился с кодом {self.xray_process.returncode}. Проверь права chmod +x {self.xray_bin}", flush=True)
+					self.tunnel_active = False
+					return False
+
+				is_alive = await self._probe_tunnel_connection()
+				if is_alive:
+					self.vless_link = candidate_link
+					self.tunnel_active = True
+
+					if self.session and not self.session.closed:
+						await self.session.close()
+						self.session = None
+
+					print(f"✅ [СЕТЬ] Живой VLESS-туннель найден с попытки #{attempt}: {config_data['remark']}", flush=True)
+					return True
+
+				print(f"⚠️ [СЕТЬ] Ключ #{attempt}/{len(candidates)} не отвечает ({config_data['remark']}), пробуем следующий...", flush=True)
+				await self._stop_xray_process()
+
+			except Exception as e:
+				logger.error(f"🚨 [СЕТЬ] Ошибка запуска Xray на попытке #{attempt}: {type(e).__name__}: {e}")
+				await self._stop_xray_process()
+
+		self.tunnel_active = False
+		print(f"🚨 [СЕТЬ] Ни один из {len(candidates)} VLESS-ключей не ответил!", flush=True)
+		return False
+
 
 	async def get_session(self) -> aiohttp.ClientSession:
 		"""Возвращает активную HTTP-сессию (через SOCKS5 на VPS или напрямую на Windows)."""
@@ -241,8 +290,9 @@ class AsyncHttpClient:
 				logger.warning(f"⚠️ [СЕТЬ] Неуспешный статус {response.status} при запросе {url}")
 				return None
 		except Exception as e:
-			logger.error(f"🚨 [СЕТЬ] Сбой запроса {url}: {e}")
+			logger.error(f"🚨 [СЕТЬ] Сбой запроса {url}: {type(e).__name__}: {e}")
 			return None
+
 
 	async def close(self):
 		"""Корректно закрывает HTTP-сессию и останавливает процесс Xray при выходе."""
@@ -257,5 +307,5 @@ class AsyncHttpClient:
 			except Exception as e:
 				logger.warning(f"⚠️ [СЕТЬ] Ошибка остановки процесса Xray: {e}")
 			finally:
-				self.xray_process = None
+				await self._stop_xray_process()
 				self.tunnel_active = False
